@@ -55,8 +55,8 @@ export default function Home() {
 
         try {
             // Replace with your actual API endpoint
-            const response = await fetch('https://jmsgw.jtexpress.vn/authn/checkToken', {
-                method: 'POST',
+            const response = await fetch('https://jmsgw.jtexpress.vn/servicequality/integration/getWaybillsByReverse?type=1&waybillId=859391669969', {
+                method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'authToken': token
