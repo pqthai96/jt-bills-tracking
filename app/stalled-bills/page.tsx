@@ -1,9 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Copy, Search, Filter, RotateCcw, Package, Clock, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Square, CheckSquare } from 'lucide-react';
 
 function Page(props: any) {
+
+    const router = useRouter();
     const [authToken, setAuthToken] = useState<string>('');
     const [startTime, setStartTime] = useState<string>((new Date()).toISOString().split('T')[0]);
     const [endTime, setEndTime] = useState<string>((new Date()).toISOString().split('T')[0]);
@@ -22,14 +25,26 @@ function Page(props: any) {
     const [selectedScanTypes, setSelectedScanTypes] = useState<string[]>([]);
     const [filterLoading, setFilterLoading] = useState<boolean>(false);
     const [stoppedDays, setStoppedDays] = useState<number>(0);
-    const [tokenDetectionStatus, setTokenDetectionStatus] = useState<string>('');
-    const [isDetectingToken, setIsDetectingToken] = useState<boolean>(false);
 
     // Calculate pagination values
     const totalPages = Math.ceil(filteredBills.length / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
     const currentBills = filteredBills.slice(startIndex, endIndex);
+
+    // Kiểm tra token trước khi vào trang
+    useEffect(() => {
+        const ylToken = localStorage.getItem('YL_TOKEN');
+
+        if (!ylToken || ylToken === "" || ylToken === null) {
+            // Không có token, chuyển hướng về trang chủ
+            router.push('/');
+            return;
+        }
+
+        // Có token, set vào state và cho phép tiếp tục
+        setAuthToken(ylToken);
+    }, [router]);
 
     // Reset to first page when filters change
     useEffect(() => {
@@ -62,19 +77,7 @@ function Page(props: any) {
         validateDates(startTime, value);
     };
 
-    // Generate bookmarklet for easy token copying
-    const generateBookmarklet = () => {
-        const bookmarkletCode = `javascript:(function(){const token=localStorage.getItem('YL_TOKEN')||localStorage.getItem('authToken')||localStorage.getItem('token');if(token){navigator.clipboard.writeText(token);alert('Token đã copy: '+token.substring(0,20)+'...\\nPaste vào trang dashboard!');}else{alert('Không tìm thấy token.\\nHãy đăng nhập JMS trước.');}})();`;
-        return bookmarkletCode;
-    };
 
-    // Copy bookmarklet to clipboard
-    const copyBookmarklet = () => {
-        const bookmarklet = generateBookmarklet();
-        navigator.clipboard.writeText(bookmarklet).then(() => {
-            setTokenDetectionStatus('✅ Bookmarklet đã copy! Tạo bookmark mới và paste vào URL');
-        });
-    };
 
     const scanTypeOptions = [
         "Quét mã gửi hàng",
@@ -443,94 +446,7 @@ function Page(props: any) {
                 {/* Input Section */}
                 <div className="bg-white rounded-2xl shadow-xl p-8 mb-4 backdrop-blur-sm border border-white/20">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Auth Token */}
-                        <div className="lg:col-span-3">
-                            <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                Authentication Token
-                            </label>
-                            <div className="space-y-3">
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={authToken}
-                                        onChange={(e) => setAuthToken(e.target.value)}
-                                        className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 bg-gray-50 hover:bg-white"
-                                        placeholder="Paste token từ JMS vào đây..."
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={copyBookmarklet}
-                                        className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-xl transition-all duration-200 whitespace-nowrap flex items-center gap-2 shadow-lg hover:shadow-xl"
-                                        title="Tạo bookmarklet để copy token dễ dàng"
-                                    >
-                                        Tạo Bookmarklet
-                                    </button>
-                                </div>
 
-                                {/* Token Status */}
-                                {tokenDetectionStatus && (
-                                    <div className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                                        tokenDetectionStatus.includes('✅')
-                                            ? 'bg-green-50 text-green-700 border border-green-200'
-                                            : tokenDetectionStatus.includes('❌')
-                                                ? 'bg-red-50 text-red-700 border border-red-200'
-                                                : tokenDetectionStatus.includes('💡')
-                                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                                    : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
-                                    }`}>
-                                        {tokenDetectionStatus}
-                                    </div>
-                                )}
-
-                                {/* Token Validation */}
-                                {authToken && (
-                                    <div className="flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 rounded-lg">
-                                        <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-                                        <span className="text-sm text-green-700 font-medium">
-                                            Token đã sẵn sàng ({authToken})
-                                        </span>
-                                        <button
-                                            onClick={() => copyToClipboard(authToken)}
-                                            className="ml-auto p-1 hover:bg-green-100 rounded transition-colors"
-                                            title="Copy token"
-                                        >
-                                            <Copy className="h-4 w-4 text-green-600" />
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* Instructions */}
-                                {!authToken && (
-                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                        <h4 className="font-semibold text-blue-800 mb-3 uppercase">Cách lấy token:</h4>
-
-                                        <div className="flex justify-between items-center gap-2">
-                                            {/* Method 1: Bookmarklet */}
-                                            <div className="bg-white rounded-lg p-3 border border-blue-100 w-1/2">
-                                                <h5 className="font-medium text-blue-700 mb-2">Cách 1: Sử dụng Bookmarklet</h5>
-                                                <ol className="text-sm text-blue-600 space-y-1 list-decimal list-inside">
-                                                    <li>Click nút "Tạo Bookmarklet" ở trên</li>
-                                                    <li>Tạo bookmark mới, paste code đã copy vào URL</li>
-                                                    <li>Vào <a href="https://jms.jtexpress.vn" target="_blank" className="underline hover:text-blue-800">JMS JT Express</a>, click bookmark</li>
-                                                    <li>Token sẽ tự động copy, quay lại paste vào đây</li>
-                                                </ol>
-                                            </div>
-
-                                            {/* Method 2: Manual */}
-                                            <div className="bg-white rounded-lg p-3 border border-blue-100 w-1/2">
-                                                <h5 className="font-medium text-blue-700 mb-2">Cách 2: Thủ công</h5>
-                                                <ol className="text-sm text-blue-600 space-y-1 list-decimal list-inside">
-                                                    <li>Đăng nhập vào <a href="https://jms.jtexpress.vn" target="_blank" className="underline hover:text-blue-800">JMS JT Express</a></li>
-                                                    <li>Nhấn F12 → Tab Application → Local Storage</li>
-                                                    <li>Tìm key "YL_TOKEN"</li>
-                                                    <li>Copy value và paste vào đây</li>
-                                                </ol>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
 
                         {/* Date Inputs */}
                         <div>
