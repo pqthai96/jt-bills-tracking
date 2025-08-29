@@ -7,8 +7,8 @@ import { useRouter } from 'next/navigation';
 
 function Page() {
 
-    const [authToken, setAuthToken] = useState<string>("");
     const router = useRouter();
+    const [authToken, setAuthToken] = useState<string>("");
     const [noDeliverNum, setNoDeliverNum] = useState(0);
     const [bills, setBills] = useState<any>([]);
 
@@ -26,22 +26,22 @@ function Page() {
 
         return { startTime, endTime };
     };
+    console.log(authToken)
 
     // Kiểm tra token trước khi vào trang
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
 
         if (!ylToken || ylToken === "" || ylToken === null) {
-            // Không có token, chuyển hướng về trang chủ
             router.push('/');
             return;
         }
-
-        // Có token, set vào state và cho phép tiếp tục
         setAuthToken(ylToken);
     }, [router]);
 
     useEffect(() => {
+        if (!authToken) return;
+
         const { startTime, endTime } = getCurrentDateRange();
 
         axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/bus_warehouse_total", {
@@ -79,9 +79,11 @@ function Page() {
                     langType: 'VN',
                 }
             }).then((resp: any) => setNoDeliverNum(resp.data.data.records[0].noDeliverNum));
-    }, [])
+    }, [authToken])
 
     useEffect(() => {
+        if (!authToken) return;
+
         const { startTime, endTime } = getCurrentDateRange();
 
         axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/bus_warehouse_detail", {
