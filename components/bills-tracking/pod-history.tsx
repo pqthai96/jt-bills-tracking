@@ -3,7 +3,7 @@
 import React, {useEffect, useState, useRef} from 'react';
 import axios from "axios";
 
-function PodHistory({waybill, authToken}: {waybill: any, authToken: string}) {
+function PodHistory({waybill, authToken}: { waybill: any, authToken: string }) {
 
     const [podHistory, setPodHistory] = useState([]);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -95,8 +95,11 @@ function PodHistory({waybill, authToken}: {waybill: any, authToken: string}) {
                             <tr
                                 key={index}
                                 className={`
-                                        hover:bg-slate-50 transition-colors duration-150 align-top
-                                        ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
+                                       transition-colors duration-150 align-top
+                                        ${row.scanNetworkCode === "028M08"
+                                    ? 'bg-pink-100'
+                                    : index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                                }
                                         border-b border-gray-100
                                     `}
                             >
@@ -107,7 +110,8 @@ function PodHistory({waybill, authToken}: {waybill: any, authToken: string}) {
                                     {row.uploadTime}
                                 </td>
                                 <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-3 py-1.5 text-xs font-medium ${getScanTypeColor(row.scanTypeName)}`}>
+                                        <span
+                                            className={`inline-flex items-center px-3 py-1.5 text-xs font-medium ${getScanTypeColor(row.scanTypeName)}`}>
                                             {row.scanTypeName}
                                         </span>
                                 </td>
