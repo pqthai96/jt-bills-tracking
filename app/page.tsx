@@ -2,7 +2,7 @@
 
 import React, {useState, useEffect} from "react";
 import Link from "next/link";
-import {AlertCircle, Search, Copy, Truck, Package, FileText, CheckCircle, XCircle, Loader2, Eye} from "lucide-react";
+import {AlertCircle, Search, Copy, Truck, Package, FileText, CheckCircle, XCircle, Loader2, Eye, Key} from "lucide-react";
 
 export default function Home() {
     const [authToken, setAuthToken] = useState<string>('');
@@ -366,7 +366,7 @@ export default function Home() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid md:grid-cols-3 gap-4">
                     {/* Theo dõi đơn hàng nhận dừng hành trình */}
                     <Link
                         href={isTokenValid ? "/stalled-bills" : "#"}
@@ -383,6 +383,24 @@ export default function Home() {
                     >
                         <Truck className="h-5 w-5"/>
                         <span className="text-center">THEO DÕI ĐƠN HÀNG NHẬN</span>
+                    </Link>
+
+                    {/* Hàng nhận + mã đoạn - New button */}
+                    <Link
+                        href={isTokenValid ? "/stalled-bills-with-keys" : "#"}
+                        className={`group relative overflow-hidden bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-3 shadow-lg transform ${
+                            isTokenValid
+                                ? 'hover:from-indigo-700 hover:to-blue-700 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer'
+                                : 'opacity-40 cursor-not-allowed'
+                        }`}
+                        onClick={(e) => {
+                            if (!isTokenValid) {
+                                e.preventDefault();
+                            }
+                        }}
+                    >
+                        <Key className="h-5 w-5"/>
+                        <span className="text-center">HÀNG NHẬN + MÃ ĐOẠN</span>
                     </Link>
 
                     {/* Phát sót */}
