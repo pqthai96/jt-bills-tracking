@@ -566,18 +566,20 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             ) : (
                                 billsList.map((code) => {
                                     const groupedOrder = groupedOrders.find(order => order.waybill === code);
+                                    const isSelected = selectedCode === code;
+
                                     return (
                                         <div
                                             key={code}
                                             onClick={(e) => handleBillClick(code, e)}
-                                            className={`rounded-lg cursor-pointer transition-all duration-200 mb-3 border ${
+                                            className={`rounded-lg cursor-pointer transition-all duration-200 mb-3 relative ${
                                                 isSearchExpanded
                                                     ? 'p-3 text-xs'
                                                     : 'p-4 text-sm'
                                             } ${
-                                                selectedCode === code
-                                                    ? "bg-red-50 border-red-300"
-                                                    : `hover:shadow-sm ${groupedOrder?.groupColor || 'bg-gray-50 border-gray-200 hover:bg-gray-100'}`
+                                                isSelected
+                                                    ? "bg-red-50 border-2 border-red-500 outline outline-2 outline-red-500 outline-offset-2 shadow-lg"
+                                                    : `border hover:shadow-sm ${groupedOrder?.groupColor || 'bg-gray-50 border-gray-200 hover:bg-gray-100'}`
                                             }`}
                                         >
                                             <div className="text-center font-mono font-semibold">{code}</div>

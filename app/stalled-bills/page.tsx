@@ -2,325 +2,201 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Copy, Search, Filter, RotateCcw, Package, Clock, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Square, CheckSquare } from 'lucide-react';
+import {
+    Copy,
+    Search,
+    Filter,
+    RotateCcw,
+    Package,
+    Clock,
+    CheckCircle,
+    AlertCircle,
+    ChevronLeft,
+    ChevronRight,
+    Square,
+    CheckSquare
+} from 'lucide-react';
+
+// Import our custom modules
+import {
+    SCAN_TYPE_OPTIONS,
+    ITEMS_PER_PAGE_OPTIONS,
+    DEFAULT_ITEMS_PER_PAGE,
+    DEFAULT_PAGE,
+    PAGINATION_SHOW_PAGES,
+    getStatusColor
+} from "@/lib/constants";
+import {
+    calculateStoppedDays,
+    translateScanType,
+    getScanTypeColor,
+    copyToClipboard,
+    validateDates,
+    getPageNumbers,
+    detectStoredToken
+} from "@/utils/utils";
+import {
+    createApiService,
+    type BillData,
+    type BillWithStatus
+} from "@/api-client/apiService";
 
 function Page(props: any) {
-
     const router = useRouter();
+
+    // Core state
     const [authToken, setAuthToken] = useState<string>('');
     const [startTime, setStartTime] = useState<string>((new Date()).toISOString().split('T')[0]);
     const [endTime, setEndTime] = useState<string>((new Date()).toISOString().split('T')[0]);
-    const [allBills, setAllBills] = useState<any>();
-    const [allBillsWithTheLastStatus, setAllBillsWithTheLastStatus] = useState<any>([]);
-    const [filteredBills, setFilteredBills] = useState<any>([]);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [copiedBill, setCopiedBill] = useState<string>('');
     const [dateError, setDateError] = useState<string>('');
 
-    // Pagination states
-    const [currentPage, setCurrentPage] = useState<number>(1);
-    const [itemsPerPage, setItemsPerPage] = useState<number>(100);
+    // Data state
+    const [allBills, setAllBills] = useState<BillData[]>([]);
+    const [allBillsWithStatus, setAllBillsWithStatus] = useState<BillWithStatus[]>([]);
+    const [filteredBills, setFilteredBills] = useState<BillWithStatus[]>([]);
+
+    // Loading states
+    const [loading, setLoading] = useState<boolean>(false);
+    const [filterLoading, setFilterLoading] = useState<boolean>(false);
+
+    // UI states
+    const [copiedBill, setCopiedBill] = useState<string>('');
 
     // Filter states
     const [selectedScanTypes, setSelectedScanTypes] = useState<string[]>([]);
-    const [filterLoading, setFilterLoading] = useState<boolean>(false);
     const [stoppedDays, setStoppedDays] = useState<number>(0);
 
-    // Calculate pagination values
+    // Pagination states
+    const [currentPage, setCurrentPage] = useState<number>(DEFAULT_PAGE);
+    const [itemsPerPage, setItemsPerPage] = useState<number>(DEFAULT_ITEMS_PER_PAGE);
+
+    // Pagination calculations
     const totalPages = Math.ceil(filteredBills.length / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
     const currentBills = filteredBills.slice(startIndex, endIndex);
 
-    // Kiểm tra token trước khi vào trang
+    // Token validation effect
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
-
         if (!ylToken || ylToken === "" || ylToken === null) {
-            // Không có token, chuyển hướng về trang chủ
             router.push('/');
             return;
         }
-
-        // Có token, set vào state và cho phép tiếp tục
         setAuthToken(ylToken);
     }, [router]);
 
+    // Auto-detect token from storage
+    useEffect(() => {
+        const token = detectStoredToken();
+        if (token) {
+            setAuthToken(token);
+        }
+
+        // Listen for storage changes
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key && e.newValue && e.key.toLowerCase().includes('token')) {
+                console.log(`Token updated in storage: ${e.key}`);
+                setAuthToken(e.newValue);
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, []);
+
     // Reset to first page when filters change
     useEffect(() => {
-        setCurrentPage(1);
+        setCurrentPage(DEFAULT_PAGE);
     }, [filteredBills, itemsPerPage]);
 
-    // Date validation
-    const validateDates = (start: string, end: string) => {
-        if (start && end) {
-            const startDate = new Date(start);
-            const endDate = new Date(end);
-            if (startDate > endDate) {
-                setDateError('Ngày kết thúc phải sau ngày bắt đầu');
-                return false;
-            }
-        }
-        setDateError('');
-        return true;
-    };
-
-    // Handle start date change
+    // Date handlers
     const handleStartDateChange = (value: string) => {
         setStartTime(value);
-        validateDates(value, endTime);
+        const validation = validateDates(value, endTime);
+        setDateError(validation.error);
     };
 
-    // Handle end date change
     const handleEndDateChange = (value: string) => {
         setEndTime(value);
-        validateDates(startTime, value);
+        const validation = validateDates(startTime, value);
+        setDateError(validation.error);
     };
 
-
-
-    const scanTypeOptions = [
-        "Quét mã gửi hàng",
-        "Ký nhận CPN",
-        "Hàng đến TTTC",
-        "Quét kiện vấn đề",
-        "Đã chuyển hoàn",
-        "Quét phát hàng",
-        "Giao lại hàng",
-        "Đang chuyển hoàn",
-        "Đăng ký chuyển hoàn",
-        "Đóng bao",
-        "Quét hàng đến",
-        "Gỡ bao",
-        "Nhận hàng",
-        "Đăng ký CH lần 2",
-        "In đơn chuyển hoàn",
-        "Kết thúc",
-        "Xác nhận chuyển đơn"
-    ];
-
-    // Get scan type color
-    const getScanTypeColor = (scanType: string) => {
-        switch (scanType) {
-            case "Ký nhận CPN":
-                return 'bg-green-100 text-green-800';
-            case "Quét kiện vấn đề":
-                return 'bg-red-100 text-red-800';
-            case "Đã chuyển hoàn":
-            case "Đang chuyển hoàn":
-            case "Đăng ký chuyển hoàn":
-            case "Đăng ký CH lần 2":
-            case "In đơn chuyển hoàn":
-                return 'bg-gray-100 text-gray-800';
-            case "Quét mã gửi hàng":
-            case "Nhận hàng":
-                return 'bg-blue-100 text-blue-800';
-            case "Hàng đến TTTC":
-            case "Quét hàng đến":
-                return 'bg-purple-100 text-purple-800';
-            case "Quét phát hàng":
-            case "Giao lại hàng":
-                return 'bg-orange-100 text-orange-800';
-            case "Kết thúc":
-                return 'bg-emerald-100 text-emerald-800';
-            default:
-                return 'bg-indigo-100 text-indigo-800';
-        }
-    };
-
-    // Copy function
-    const copyToClipboard = async (text: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedBill(text);
-            setTimeout(() => setCopiedBill(''), 2000);
-        } catch (err) {
-            console.error('Failed to copy: ', err);
-        }
-    };
-
-    const getSumData = () => {
-        if (!validateDates(startTime, endTime)) {
+    // Main data fetching function - using API service
+    const getSumData = async () => {
+        const validation = validateDates(startTime, endTime);
+        if (!validation.isValid) {
+            setDateError(validation.error);
             return;
         }
 
         setLoading(true);
-        // Replace with axios import: import axios from "axios";
-        const axios = require('axios'); // For demo purposes
 
-        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_sum",
-            {
-                "current": 1,
-                "size": 20,
-                "dimensionType": 336,
-                "takingNetworkCode": [
-                    "028M08"
-                ],
-                "startTime": `${startTime} 00:00:00`,
-                "endTime": `${endTime} 23:59:59`,
-                "countryId": "1"
-            }, {
-                headers: {
-                    authToken: authToken,
-                    lang: 'VN',
-                    langType: 'VN',
-                }
-            }).then((data: any) => {
-            getAllBills(data.data.data.records[0].takingTotal);
-        }).catch((error: any) => {
-            console.log(error);
-            setLoading(false);
-        });
-    }
-
-    const getAllBills = (takingTotal: number) => {
-        // Replace with axios import: import axios from "axios";
-        const axios = require('axios'); // For demo purposes
-
-        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_detail", {
-                "current": 1,
-                "size": takingTotal,
-                "takingNetworkCode": "028M08",
-                "dimensionType": "takingTotal",
-                "startTime": `${startTime} 00:00:00`,
-                "endTime": `${endTime} 23:59:59`,
-                "countryId": "1"
-            },
-            {
-                headers: {
-                    authToken: authToken,
-                    lang: 'VN',
-                    langType: 'VN',
-                }
-            }).then((data: any) => {
-            setAllBills(data.data.data.records);
-            getAllBillsWithTheLastStatus(data.data.data.records);
-        })
-            .catch((error: any) => {
-                console.log(error);
-                setLoading(false);
-            });
-    }
-
-    const chunkArray = (array: any[], chunkSize: number) => {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-
-    const getAllBillsWithTheLastStatus = async (billsData: any[]) => {
         try {
-            const allBillsCode = billsData.map((item: any) => item.billCode);
-            console.log('Total bill codes:', allBillsCode.length);
+            const apiService = createApiService(authToken);
+            const data = await apiService.getAllBillsData(startTime, endTime);
 
-            const batches = chunkArray(allBillsCode, 1000);
-            console.log('Number of batches:', batches.length);
-
-            console.log('Starting parallel API calls...');
-            const startTime = Date.now();
-
-            // Replace with axios import: import axios from "axios";
-            const axios = require('axios'); // For demo purposes
-
-            const batchPromises = batches.map((batch, index) => {
-                return axios.post("https://jmsgw.jtexpress.vn/operatingplatform/wayBillStatusNew/listPage", {
-                    "current": 1,
-                    "size": batch.length,
-                    "billNoList": batch,
-                    "countryId": "1"
-                }, {
-                    headers: {
-                        authToken: authToken,
-                        lang: 'VN',
-                        langType: 'VN',
-                    }
-                }).then((response: any) => {
-                    console.log(`Batch ${index + 1}/${batches.length} completed`);
-                    return response.data?.data?.records || [];
-                }).catch((error: any) => {
-                    console.error(`Error in batch ${index + 1}:`, error);
-                    return [];
-                });
-            });
-
-            const batchResults = await Promise.all(batchPromises);
-            const endTime = Date.now();
-            console.log(`All batches completed in ${(endTime - startTime) / 1000}s`);
-
-            const allResults = batchResults.flat();
-            setAllBillsWithTheLastStatus(allResults);
-            console.log('Total results:', allResults.length);
+            // Set data (no terminal codes for this version)
+            setAllBills(data.allBills);
+            setAllBillsWithStatus(data.billsWithStatus);
 
         } catch (error) {
-            console.error('Error in getAllBillsWithTheLastStatus:', error);
+            console.error('Error fetching data:', error);
+            // Reset states on error
+            setAllBills([]);
+            setAllBillsWithStatus([]);
         } finally {
             setLoading(false);
         }
-    }
-
-    const calculateStoppedDays = (scanTime: string) => {
-        if (!scanTime) return 0;
-        const scanDate = new Date(scanTime);
-        const now = new Date();
-        const diffTime = Math.abs(now.getTime() - scanDate.getTime());
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays;
     };
 
-    const translations: { [key: string]: string } = {
-        "发件扫描": "Quét mã gửi hàng",
-        "快件签收": "Ký nhận CPN",
-        "中心到件": "Hàng đến TTTC",
-        "问题件扫描": "Quét kiện vấn đề",
-        "退件签收": "Đã chuyển hoàn",
-        "出仓扫描": "Quét phát hàng",
-        "重派": "Giao lại hàng",
-        "退件确认": "Đang chuyển hoàn",
-        "退件登记": "Đăng ký chuyển hoàn",
-        "建包扫描": "Đóng bao",
-        "到件扫描": "Quét hàng đến",
-        "拆包扫描": "Gỡ bao",
-        "快件揽收": "Nhận hàng",
-        "再次登记": "Đăng ký CH lần 2",
-        "退件扫描": "In đơn chuyển hoàn",
-        "完结": "Kết thúc",
-        "转单确认": "Xác nhận chuyển đơn"
+    // Copy function
+    const handleCopyToClipboard = async (text: string) => {
+        const success = await copyToClipboard(text);
+        if (success) {
+            setCopiedBill(text);
+            setTimeout(() => setCopiedBill(''), 2000);
+        }
     };
 
-    const translateScanType = (scanTypeName: string) => {
-        return translations[scanTypeName] || scanTypeName;
+    // Filter handlers
+    const handleScanTypeChange = (scanType: string, checked: boolean) => {
+        if (checked) {
+            setSelectedScanTypes(prev => [...prev, scanType]);
+        } else {
+            setSelectedScanTypes(prev => prev.filter(type => type !== scanType));
+        }
     };
 
-    // Check/Uncheck all functions
-    const selectAllScanTypes = () => {
-        setSelectedScanTypes([...scanTypeOptions]);
-    };
+    // Select/Deselect all functions
+    const selectAllScanTypes = () => setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
+    const deselectAllScanTypes = () => setSelectedScanTypes([]);
 
-    const deselectAllScanTypes = () => {
-        setSelectedScanTypes([]);
+    const clearFilters = () => {
+        setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
+        setStoppedDays(0);
     };
 
     // Filter logic
     useEffect(() => {
         const applyFilters = async () => {
             setFilterLoading(true);
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise(resolve => setTimeout(resolve, 100));
 
-            let filtered = [...allBillsWithTheLastStatus];
+            let filtered = [...allBillsWithStatus];
 
-            // Only filter if there are selected scan types (not empty)
+            // Filter by scan type
             if (selectedScanTypes.length > 0) {
                 filtered = filtered.filter(item => {
                     const translatedType = translateScanType(item.scanTypeName);
                     return selectedScanTypes.includes(translatedType);
                 });
             } else {
-                // If no scan types selected, show no results
                 filtered = [];
             }
 
+            // Filter by stopped days
             if (stoppedDays > 0) {
                 filtered = filtered.filter(item => {
                     const daysStopped = calculateStoppedDays(item.scanTime);
@@ -333,74 +209,14 @@ function Page(props: any) {
         };
 
         applyFilters();
-    }, [allBillsWithTheLastStatus, selectedScanTypes, stoppedDays]);
+    }, [allBillsWithStatus, selectedScanTypes, stoppedDays]);
 
+    // Auto-select all scan types when data is loaded
     useEffect(() => {
-        if (allBillsWithTheLastStatus.length > 0 && selectedScanTypes.length === 0) {
-            setSelectedScanTypes([...scanTypeOptions]);
+        if (allBillsWithStatus.length > 0 && selectedScanTypes.length === 0) {
+            setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
         }
-    }, [allBillsWithTheLastStatus]);
-
-    useEffect(() => {
-        console.log('All bills:', allBills?.length || 0);
-        console.log('All bills with status:', allBillsWithTheLastStatus?.length || 0);
-        console.log('Filtered bills:', filteredBills?.length || 0);
-    }, [allBills, allBillsWithTheLastStatus, filteredBills]);
-
-    // Auto-detect token from localStorage/sessionStorage
-    useEffect(() => {
-        const tryGetStoredToken = () => {
-            // Common token keys
-            const tokenKeys = [
-                'authToken', 'token', 'access_token', 'accessToken',
-                'jwt', 'jwtToken', 'authorization', 'auth',
-                'user_token', 'session_token'
-            ];
-
-            for (const key of tokenKeys) {
-                const token = localStorage.getItem(key) || sessionStorage.getItem(key);
-                if (token && token.length > 10) { // Basic validation
-                    console.log(`Found token in ${key}:`, token.substring(0, 20) + '...');
-                    setAuthToken(token);
-                    return;
-                }
-            }
-        };
-
-        // Try to get token on component mount
-        tryGetStoredToken();
-
-        // Listen for storage changes (if user logs in to JMS in another tab)
-        const handleStorageChange = (e: StorageEvent) => {
-            if (e.key && e.newValue && e.key.toLowerCase().includes('token')) {
-                console.log(`Token updated in storage: ${e.key}`);
-                setAuthToken(e.newValue);
-            }
-        };
-
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
-    }, []);
-
-    const handleScanTypeChange = (scanType: string, checked: boolean) => {
-        if (checked) {
-            setSelectedScanTypes(prev => [...prev, scanType]);
-        } else {
-            setSelectedScanTypes(prev => prev.filter(type => type !== scanType));
-        }
-    };
-
-    const clearFilters = () => {
-        setSelectedScanTypes([...scanTypeOptions]);
-        setStoppedDays(0);
-    };
-
-    const getStatusColor = (daysStopped: number) => {
-        if (daysStopped >= 7) return 'text-red-600 bg-red-50';
-        if (daysStopped >= 3) return 'text-orange-600 bg-orange-50';
-        if (daysStopped >= 1) return 'text-yellow-600 bg-yellow-50';
-        return 'text-green-600 bg-green-50';
-    };
+    }, [allBillsWithStatus]);
 
     // Pagination functions
     const goToPage = (page: number) => {
@@ -408,35 +224,11 @@ function Page(props: any) {
     };
 
     const goToPrevPage = () => {
-        if (currentPage > 1) {
-            setCurrentPage(currentPage - 1);
-        }
+        if (currentPage > 1) setCurrentPage(currentPage - 1);
     };
 
     const goToNextPage = () => {
-        if (currentPage < totalPages) {
-            setCurrentPage(currentPage + 1);
-        }
-    };
-
-    // Generate page numbers for pagination
-    const getPageNumbers = () => {
-        const pages = [];
-        const showPages = 5; // Number of pages to show
-
-        let startPage = Math.max(1, currentPage - Math.floor(showPages / 2));
-        let endPage = Math.min(totalPages, startPage + showPages - 1);
-
-        // Adjust start page if we're near the end
-        if (endPage - startPage < showPages - 1) {
-            startPage = Math.max(1, endPage - showPages + 1);
-        }
-
-        for (let i = startPage; i <= endPage; i++) {
-            pages.push(i);
-        }
-
-        return pages;
+        if (currentPage < totalPages) setCurrentPage(currentPage + 1);
     };
 
     return (
@@ -446,9 +238,6 @@ function Page(props: any) {
                 {/* Input Section */}
                 <div className="bg-white rounded-2xl shadow-xl p-8 mb-4 backdrop-blur-sm border border-white/20">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-
-                        {/* Date Inputs */}
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-2">
                                 Ngày bắt đầu
@@ -477,7 +266,7 @@ function Page(props: any) {
                             />
                             {dateError && (
                                 <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
-                                    <AlertCircle className="h-4 w-4" />
+                                    <AlertCircle className="h-4 w-4"/>
                                     {dateError}
                                 </p>
                             )}
@@ -496,7 +285,7 @@ function Page(props: any) {
                                     </>
                                 ) : (
                                     <>
-                                        <Search className="h-5 w-5" />
+                                        <Search className="h-5 w-5"/>
                                         Lấy dữ liệu
                                     </>
                                 )}
@@ -515,18 +304,21 @@ function Page(props: any) {
                 )}
 
                 {/* Filters */}
-                {allBillsWithTheLastStatus.length > 0 && (
+                {allBillsWithStatus.length > 0 && (
                     <div className="bg-white rounded-2xl shadow-xl p-8 mb-4 backdrop-blur-sm border border-white/20">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                             <div className="flex items-center gap-2">
-                                <Filter className="h-6 w-6 text-blue-600" />
+                                <Filter className="h-6 w-6 text-blue-600"/>
                                 <h3 className="text-xl font-bold text-gray-800">Bộ lọc dữ liệu</h3>
+                                {filterLoading && (
+                                    <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                )}
                             </div>
                             <button
                                 onClick={clearFilters}
                                 className="flex items-center gap-2 bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
                             >
-                                <RotateCcw className="h-4 w-4" />
+                                <RotateCcw className="h-4 w-4"/>
                                 Reset bộ lọc
                             </button>
                         </div>
@@ -534,7 +326,7 @@ function Page(props: any) {
                         {/* Journey Filter */}
                         <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-6 rounded-xl border border-yellow-200 mb-6">
                             <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                <Clock className="h-5 w-5 text-yellow-600" />
+                                <Clock className="h-5 w-5 text-yellow-600"/>
                                 Theo dõi đơn hàng dừng hành trình:
                             </label>
                             <select
@@ -556,7 +348,7 @@ function Page(props: any) {
                         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-200">
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
-                                    <Package className="h-5 w-5 text-blue-600" />
+                                    <Package className="h-5 w-5 text-blue-600"/>
                                     <label className="block text-sm font-semibold text-gray-700">
                                         Lọc theo loại quét kiện cuối cùng:
                                     </label>
@@ -565,29 +357,26 @@ function Page(props: any) {
                                     )}
                                 </div>
 
-                                {/* Select All / Deselect All buttons */}
                                 <div className="flex gap-2">
                                     <button
                                         onClick={selectAllScanTypes}
                                         className="flex items-center gap-1 px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Chọn tất cả"
                                     >
-                                        <CheckSquare className="h-4 w-4" />
+                                        <CheckSquare className="h-4 w-4"/>
                                         Chọn tất cả
                                     </button>
                                     <button
                                         onClick={deselectAllScanTypes}
                                         className="flex items-center gap-1 px-3 py-1 bg-gray-500 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Bỏ chọn tất cả"
                                     >
-                                        <Square className="h-4 w-4" />
+                                        <Square className="h-4 w-4"/>
                                         Bỏ chọn tất cả
                                     </button>
                                 </div>
                             </div>
 
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                {scanTypeOptions.map((scanType) => (
+                                {SCAN_TYPE_OPTIONS.map((scanType) => (
                                     <label key={scanType} className="flex items-center space-x-2 p-2 rounded-lg hover:bg-white/50 transition-colors cursor-pointer">
                                         <input
                                             type="checkbox"
@@ -601,7 +390,7 @@ function Page(props: any) {
                             </div>
                             <div className="mt-4 px-4 py-2 bg-white rounded-lg">
                                 <span className="text-sm text-blue-600 font-medium">
-                                    Hiển thị: {selectedScanTypes.length}/{scanTypeOptions.length} loại quét
+                                    Hiển thị: {selectedScanTypes.length}/{SCAN_TYPE_OPTIONS.length} loại quét
                                 </span>
                             </div>
                         </div>
@@ -609,7 +398,7 @@ function Page(props: any) {
                 )}
 
                 {/* Statistics */}
-                {allBills && allBillsWithTheLastStatus && (
+                {allBills.length > 0 && allBillsWithStatus.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-4">
                         <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
@@ -617,7 +406,7 @@ function Page(props: any) {
                                     <p className="text-blue-100 text-sm uppercase">Tổng số đơn hàng</p>
                                     <p className="text-3xl font-bold">{allBills.length}</p>
                                 </div>
-                                <Package className="h-12 w-12 text-blue-200" />
+                                <Package className="h-12 w-12 text-blue-200"/>
                             </div>
                         </div>
 
@@ -627,7 +416,7 @@ function Page(props: any) {
                                     <p className="text-green-100 text-sm uppercase">Sau lọc</p>
                                     <p className="text-3xl font-bold">{filteredBills.length}</p>
                                 </div>
-                                <CheckCircle className="h-12 w-12 text-green-200" />
+                                <CheckCircle className="h-12 w-12 text-green-200"/>
                             </div>
                         </div>
 
@@ -637,7 +426,7 @@ function Page(props: any) {
                                     <p className="text-purple-100 text-sm uppercase">Trang hiện tại</p>
                                     <p className="text-3xl font-bold">{currentPage}/{totalPages}</p>
                                 </div>
-                                <Filter className="h-12 w-12 text-purple-200" />
+                                <Filter className="h-12 w-12 text-purple-200"/>
                             </div>
                         </div>
 
@@ -646,10 +435,10 @@ function Page(props: any) {
                                 <div>
                                     <p className="text-orange-100 text-sm uppercase">Dừng hành trình</p>
                                     <p className="text-3xl font-bold">
-                                        {stoppedDays > 0 ? filteredBills.filter((item: any) => calculateStoppedDays(item.scanTime) >= stoppedDays).length : 0}
+                                        {stoppedDays > 0 ? filteredBills.filter((item) => calculateStoppedDays(item.scanTime) >= stoppedDays).length : 0}
                                     </p>
                                 </div>
-                                <AlertCircle className="h-12 w-12 text-orange-200" />
+                                <AlertCircle className="h-12 w-12 text-orange-200"/>
                             </div>
                         </div>
                     </div>
@@ -659,7 +448,6 @@ function Page(props: any) {
                 {filteredBills.length > 0 && (
                     <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                         <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
-                            {/* Items per page selector */}
                             <div className="flex items-center gap-3">
                                 <label className="text-sm font-medium text-gray-700">Hiển thị:</label>
                                 <select
@@ -667,14 +455,12 @@ function Page(props: any) {
                                     onChange={(e) => setItemsPerPage(parseInt(e.target.value))}
                                     className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 >
-                                    <option value={50}>50 đơn/trang</option>
-                                    <option value={100}>100 đơn/trang</option>
-                                    <option value={200}>200 đơn/trang</option>
-                                    <option value={500}>500 đơn/trang</option>
+                                    {ITEMS_PER_PAGE_OPTIONS.map(option => (
+                                        <option key={option} value={option}>{option} đơn/trang</option>
+                                    ))}
                                 </select>
                             </div>
 
-                            {/* Page info */}
                             <div className="text-sm text-gray-600">
                                 Hiển thị {startIndex + 1} - {Math.min(endIndex, filteredBills.length)} của {filteredBills.length} đơn hàng
                             </div>
@@ -699,7 +485,7 @@ function Page(props: any) {
                                 </tr>
                                 </thead>
                                 <tbody>
-                                {currentBills?.map((item: any, index: number) => {
+                                {currentBills.map((item, index) => {
                                     const daysStopped = calculateStoppedDays(item.scanTime);
                                     const statusColor = getStatusColor(daysStopped);
                                     const globalIndex = startIndex + index;
@@ -711,27 +497,25 @@ function Page(props: any) {
                                         <tr key={index} className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${isEvenRow ? 'bg-white' : 'bg-gray-50/50'}`}>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="font-mono font-medium text-gray-900 text-md">
-                                                        {item.billCode}
-                                                    </span>
+                                                        <span className="font-mono font-medium text-gray-900 text-md">
+                                                            {item.billCode}
+                                                        </span>
                                                     <button
-                                                        onClick={() => copyToClipboard(item.billCode)}
+                                                        onClick={() => handleCopyToClipboard(item.billCode)}
                                                         className="p-1 hover:bg-blue-100 rounded transition-colors group"
                                                         title="Copy mã vận đơn"
                                                     >
-                                                        <Copy className={`h-3 w-3 transition-colors ${copiedBill === item.billCode ? 'text-green-500' : 'text-gray-400 group-hover:text-blue-500'}`} />
+                                                        <Copy className={`h-3 w-3 transition-colors ${copiedBill === item.billCode ? 'text-green-500' : 'text-gray-400 group-hover:text-blue-500'}`}/>
                                                     </button>
                                                     {copiedBill === item.billCode && (
                                                         <span className="text-md text-green-500 font-medium animate-fade-in">
-                                                            Copied!
-                                                        </span>
+                                                                Copied!
+                                                            </span>
                                                     )}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-700 text-md min-w-[8rem] max-w-[40rem]">
-                                                <div>
-                                                    {item.waybillTrackingContent}
-                                                </div>
+                                                <div>{item.waybillTrackingContent}</div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-600 text-center font-mono text-md max-w-[10rem]">
                                                 {item.scanTime}
@@ -745,14 +529,14 @@ function Page(props: any) {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 max-w-[10rem]">
-                                                <span className={`px-2 py-1 rounded-md text-xs text-center block w-full truncate font-medium ${scanTypeColor}`} title={translatedScanType}>
-                                                    {translatedScanType}
-                                                </span>
+                                                    <span className={`px-2 py-1 rounded-md text-xs text-center block w-full truncate font-medium ${scanTypeColor}`} title={translatedScanType}>
+                                                        {translatedScanType}
+                                                    </span>
                                             </td>
                                             <td className="px-6 py-4 text-center max-w-[8rem]">
-                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
-                                                    {daysStopped} ngày
-                                                </span>
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                                                        {daysStopped} ngày
+                                                    </span>
                                             </td>
                                         </tr>
                                     );
@@ -760,9 +544,9 @@ function Page(props: any) {
                                 </tbody>
                             </table>
 
-                            {filteredBills?.length === 0 && allBillsWithTheLastStatus?.length > 0 && (
+                            {filteredBills.length === 0 && allBillsWithStatus.length > 0 && (
                                 <div className="text-center p-12 text-gray-500">
-                                    <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+                                    <Package className="h-16 w-16 text-gray-300 mx-auto mb-4"/>
                                     <h3 className="text-xl font-semibold mb-2">Không tìm thấy dữ liệu</h3>
                                     <p>Không có dữ liệu phù hợp với bộ lọc hiện tại</p>
                                 </div>
@@ -789,11 +573,11 @@ function Page(props: any) {
                                     disabled={currentPage === 1}
                                     className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                 >
-                                    <ChevronLeft className="h-5 w-5" />
+                                    <ChevronLeft className="h-5 w-5"/>
                                 </button>
 
                                 <div className="flex items-center gap-1">
-                                    {getPageNumbers().map((pageNum) => (
+                                    {getPageNumbers(currentPage, totalPages, PAGINATION_SHOW_PAGES).map((pageNum) => (
                                         <button
                                             key={pageNum}
                                             onClick={() => goToPage(pageNum)}
@@ -813,7 +597,7 @@ function Page(props: any) {
                                     disabled={currentPage === totalPages}
                                     className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                 >
-                                    <ChevronRight className="h-5 w-5" />
+                                    <ChevronRight className="h-5 w-5"/>
                                 </button>
 
                                 <button
@@ -832,9 +616,16 @@ function Page(props: any) {
             {/* Custom styles for animations */}
             <style jsx>{`
                 @keyframes fade-in {
-                    from { opacity: 0; transform: translateY(-10px); }
-                    to { opacity: 1; transform: translateY(0); }
+                    from {
+                        opacity: 0;
+                        transform: translateY(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
                 }
+
                 .animate-fade-in {
                     animation: fade-in 0.3s ease-out;
                 }

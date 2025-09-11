@@ -1,7 +1,7 @@
 "use client";
 
-import React, {useEffect, useState} from 'react';
-import {useRouter} from 'next/navigation';
+import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
     Copy,
     Search,
@@ -17,434 +17,179 @@ import {
     CheckSquare
 } from 'lucide-react';
 
-function Page(props: any) {
+// Import our custom modules
+import {
+    SCAN_TYPE_OPTIONS,
+    ITEMS_PER_PAGE_OPTIONS,
+    DEFAULT_ITEMS_PER_PAGE,
+    DEFAULT_PAGE,
+    PAGINATION_SHOW_PAGES,
+    getStatusColor
+} from "@/lib/constants";
+import {
+    calculateStoppedDays,
+    translateScanType,
+    getScanTypeColor,
+    copyToClipboard,
+    validateDates,
+    getPageNumbers,
+    detectStoredToken
+} from "@/utils/utils";
+import {
+    createApiService,
+    type BillData,
+    type BillWithStatus,
+    type BillWithTerminalCode
+} from "@/api-client/apiService";
 
+function Page(props: any) {
     const router = useRouter();
+
+    // Core state
     const [authToken, setAuthToken] = useState<string>('');
     const [startTime, setStartTime] = useState<string>((new Date()).toISOString().split('T')[0]);
     const [endTime, setEndTime] = useState<string>((new Date()).toISOString().split('T')[0]);
-    const [allBills, setAllBills] = useState<any>();
-    const [allBillsWithTheLastStatus, setAllBillsWithTheLastStatus] = useState<any>([]);
-    const [filteredBills, setFilteredBills] = useState<any>([]);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [copiedBill, setCopiedBill] = useState<string>('');
     const [dateError, setDateError] = useState<string>('');
 
-    // Pagination states
-    const [currentPage, setCurrentPage] = useState<number>(1);
-    const [itemsPerPage, setItemsPerPage] = useState<number>(100);
+    // Data state
+    const [allBills, setAllBills] = useState<BillData[]>([]);
+    const [allBillsWithStatus, setAllBillsWithStatus] = useState<BillWithStatus[]>([]);
+    const [billsWithTerminalCode, setBillsWithTerminalCode] = useState<BillWithTerminalCode[]>([]);
+    const [filteredBills, setFilteredBills] = useState<BillWithTerminalCode[]>([]);
+
+    // Loading states
+    const [loading, setLoading] = useState<boolean>(false);
+    const [loadingTerminalCodes, setLoadingTerminalCodes] = useState<boolean>(false);
+    const [filterLoading, setFilterLoading] = useState<boolean>(false);
+
+    // UI states
+    const [copiedBill, setCopiedBill] = useState<string>('');
 
     // Filter states
     const [selectedScanTypes, setSelectedScanTypes] = useState<string[]>([]);
-    const [filterLoading, setFilterLoading] = useState<boolean>(false);
     const [stoppedDays, setStoppedDays] = useState<number>(0);
-
-    // New states for terminal dispatch code filtering
-    const [billsWithTerminalCode, setBillsWithTerminalCode] = useState<any[]>([]);
-    const [loadingTerminalCodes, setLoadingTerminalCodes] = useState<boolean>(false);
     const [availableTerminalPrefixes, setAvailableTerminalPrefixes] = useState<string[]>([]);
     const [selectedTerminalPrefixes, setSelectedTerminalPrefixes] = useState<string[]>([]);
 
-    // Calculate pagination values
+    // Pagination states
+    const [currentPage, setCurrentPage] = useState<number>(DEFAULT_PAGE);
+    const [itemsPerPage, setItemsPerPage] = useState<number>(DEFAULT_ITEMS_PER_PAGE);
+
+    // Pagination calculations
     const totalPages = Math.ceil(filteredBills.length / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
     const currentBills = filteredBills.slice(startIndex, endIndex);
 
-    // Kiểm tra token trước khi vào trang
+    // Token validation effect
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
-
         if (!ylToken || ylToken === "" || ylToken === null) {
-            // Không có token, chuyển hướng về trang chủ
             router.push('/');
             return;
         }
-
-        // Có token, set vào state và cho phép tiếp tục
         setAuthToken(ylToken);
     }, [router]);
 
+    // Auto-detect token from storage
+    useEffect(() => {
+        const token = detectStoredToken();
+        if (token) {
+            setAuthToken(token);
+        }
+
+        // Listen for storage changes
+        const handleStorageChange = (e: StorageEvent) => {
+            if (e.key && e.newValue && e.key.toLowerCase().includes('token')) {
+                console.log(`Token updated in storage: ${e.key}`);
+                setAuthToken(e.newValue);
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, []);
+
     // Reset to first page when filters change
     useEffect(() => {
-        setCurrentPage(1);
+        setCurrentPage(DEFAULT_PAGE);
     }, [filteredBills, itemsPerPage]);
 
-    // Date validation
-    const validateDates = (start: string, end: string) => {
-        if (start && end) {
-            const startDate = new Date(start);
-            const endDate = new Date(end);
-            if (startDate > endDate) {
-                setDateError('Ngày kết thúc phải sau ngày bắt đầu');
-                return false;
-            }
-        }
-        setDateError('');
-        return true;
-    };
-
-    // Handle start date change
+    // Date handlers
     const handleStartDateChange = (value: string) => {
         setStartTime(value);
-        validateDates(value, endTime);
+        const validation = validateDates(value, endTime);
+        setDateError(validation.error);
     };
 
-    // Handle end date change
     const handleEndDateChange = (value: string) => {
         setEndTime(value);
-        validateDates(startTime, value);
+        const validation = validateDates(startTime, value);
+        setDateError(validation.error);
     };
 
-    const scanTypeOptions = [
-        "Quét mã gửi hàng",
-        "Ký nhận CPN",
-        "Hàng đến TTTC",
-        "Quét kiện vấn đề",
-        "Đã chuyển hoàn",
-        "Quét phát hàng",
-        "Giao lại hàng",
-        "Đang chuyển hoàn",
-        "Đăng ký chuyển hoàn",
-        "Đóng bao",
-        "Quét hàng đến",
-        "Gỡ bao",
-        "Nhận hàng",
-        "Đăng ký CH lần 2",
-        "In đơn chuyển hoàn",
-        "Kết thúc",
-        "Xác nhận chuyển đơn"
-    ];
-
-
-    // Get scan type color
-    const getScanTypeColor = (scanType: string) => {
-        switch (scanType) {
-            case "Ký nhận CPN":
-                return 'bg-green-100 text-green-800';
-            case "Quét kiện vấn đề":
-                return 'bg-red-100 text-red-800';
-            case "Đã chuyển hoàn":
-            case "Đang chuyển hoàn":
-            case "Đăng ký chuyển hoàn":
-            case "Đăng ký CH lần 2":
-            case "In đơn chuyển hoàn":
-                return 'bg-gray-100 text-gray-800';
-            case "Quét mã gửi hàng":
-            case "Nhận hàng":
-                return 'bg-blue-100 text-blue-800';
-            case "Hàng đến TTTC":
-            case "Quét hàng đến":
-                return 'bg-purple-100 text-purple-800';
-            case "Quét phát hàng":
-            case "Giao lại hàng":
-                return 'bg-orange-100 text-orange-800';
-            case "Kết thúc":
-                return 'bg-emerald-100 text-emerald-800';
-            default:
-                return 'bg-indigo-100 text-indigo-800';
-        }
-    };
-
-    // Function to get order details and terminal dispatch codes
-
-
-    // Copy function
-    const copyToClipboard = async (text: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedBill(text);
-            setTimeout(() => setCopiedBill(''), 2000);
-        } catch (err) {
-            console.error('Failed to copy: ', err);
-        }
-    };
-
-    const getSumData = () => {
-        if (!validateDates(startTime, endTime)) {
+    // Main data fetching function - optimized
+    const getSumData = async () => {
+        const validation = validateDates(startTime, endTime);
+        if (!validation.isValid) {
+            setDateError(validation.error);
             return;
         }
 
         setLoading(true);
-        // Replace with axios import: import axios from "axios";
-        const axios = require('axios'); // For demo purposes
-
-        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_sum",
-            {
-                "current": 1,
-                "size": 20,
-                "dimensionType": 336,
-                "takingNetworkCode": [
-                    "028M08"
-                ],
-                "startTime": `${startTime} 00:00:00`,
-                "endTime": `${endTime} 23:59:59`,
-                "countryId": "1"
-            }, {
-                headers: {
-                    authToken: authToken,
-                    lang: 'VN',
-                    langType: 'VN',
-                }
-            }).then((data: any) => {
-            getAllBills(data.data.data.records[0].takingTotal);
-        }).catch((error: any) => {
-            console.log(error);
-            setLoading(false);
-        });
-    }
-
-    const getAllBills = (takingTotal: number) => {
-        // Replace with axios import: import axios from "axios";
-        const axios = require('axios'); // For demo purposes
-
-        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_detail", {
-                "current": 1,
-                "size": takingTotal,
-                "takingNetworkCode": "028M08",
-                "dimensionType": "takingTotal",
-                "startTime": `${startTime} 00:00:00`,
-                "endTime": `${endTime} 23:59:59`,
-                "countryId": "1"
-            },
-            {
-                headers: {
-                    authToken: authToken,
-                    lang: 'VN',
-                    langType: 'VN',
-                }
-            }).then((data: any) => {
-            setAllBills(data.data.data.records);
-            getAllBillsWithTheLastStatus(data.data.data.records);
-        })
-            .catch((error: any) => {
-                console.log(error);
-                setLoading(false);
-            });
-    }
-
-    const chunkArray = (array: any[], chunkSize: number) => {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-
-    // Sửa lại hàm getAllBillsWithTheLastStatus
-    const getAllBillsWithTheLastStatus = async (billsData: any[]) => {
-        try {
-            const allBillsCode = billsData.map((item: any) => item.billCode);
-            console.log('Total bill codes:', allBillsCode.length);
-
-            const batches = chunkArray(allBillsCode, 1000);
-            console.log('Number of batches:', batches.length);
-
-            console.log('Starting parallel API calls...');
-            const startTime = Date.now();
-
-            const axios = require('axios');
-
-            const batchPromises = batches.map(async (batch, index) => {
-                try {
-                    const response = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/wayBillStatusNew/listPage", {
-                        "current": 1,
-                        "size": batch.length,
-                        "billNoList": batch,
-                        "countryId": "1"
-                    }, {
-                        headers: {
-                            authToken: authToken,
-                            lang: 'VN',
-                            langType: 'VN',
-                        }
-                    });
-
-                    console.log(`Batch ${index + 1}/${batches.length} completed`);
-                    return response.data?.data?.records || [];
-                } catch (error) {
-                    console.error(`Error in batch ${index + 1}:`, error);
-                    return []; // Return empty array thay vì crash
-                }
-            });
-
-            const batchResults = await Promise.all(batchPromises);
-            const endTime = Date.now();
-            console.log(`All batches completed in ${(endTime - startTime) / 1000}s`);
-
-            const allResults = batchResults.flat();
-
-            // Set state trước
-            setAllBillsWithTheLastStatus(allResults);
-
-            // Đợi state update xong rồi mới gọi tiếp
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // Load terminal dispatch codes sau khi set state xong
-            await getOrdersWithTerminalCodes(allResults);
-
-            console.log('Total results:', allResults.length);
-
-        } catch (error) {
-            console.error('Error in getAllBillsWithTheLastStatus:', error);
-            setAllBillsWithTheLastStatus([]); // Set empty array khi lỗi
-        } finally {
-            setLoading(false);
-        }
-    }
-
-// Sửa lại hàm getOrdersWithTerminalCodes để xử lý lỗi tốt hơn
-    const getOrdersWithTerminalCodes = async (billsWithStatus: any[]) => {
         setLoadingTerminalCodes(true);
+
         try {
-            const axios = require('axios');
+            const apiService = createApiService(authToken);
+            const data = await apiService.getAllBillsData(startTime, endTime);
 
-            // Giảm số lượng concurrent requests để tránh quá tải server
-            const processInBatches = async (items: any[], batchSize: number = 50) => {
-                const results = [];
+            // Set all data
+            setAllBills(data.allBills);
+            setAllBillsWithStatus(data.billsWithStatus);
+            setBillsWithTerminalCode(data.billsWithTerminalCodes);
 
-                for (let i = 0; i < items.length; i += batchSize) {
-                    const batch = items.slice(i, i + batchSize);
-
-                    const batchPromises = batch.map(async (bill) => {
-                        try {
-                            const response = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail", {
-                                "waybillNo": bill.billCode,
-                                "countryId": "1"
-                            }, {
-                                headers: {
-                                    authToken: authToken,
-                                    lang: 'VN',
-                                    langType: 'VN',
-                                },
-                                timeout: 10000 // 10s timeout
-                            });
-
-                            const terminalDispatchCode = response.data?.data?.details?.terminalDispatchCode || '';
-                            const parsed = parseTerminalDispatchCode(terminalDispatchCode);
-
-                            return {
-                                ...bill,
-                                terminalDispatchCode,
-                                terminalPrefix: parsed.prefix,
-                                terminalRemaining: parsed.remaining
-                            };
-                        } catch (error: any) {
-                            console.error(`Error loading terminal code for ${bill.billCode}:`, error.message);
-                            // Trả về bill với terminal code rỗng thay vì crash
-                            return {
-                                ...bill,
-                                terminalDispatchCode: '',
-                                terminalPrefix: '',
-                                terminalRemaining: ''
-                            };
-                        }
-                    });
-
-                    const batchResults = await Promise.all(batchPromises);
-                    results.push(...batchResults);
-
-                    console.log(`Processed batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(items.length / batchSize)}`);
-
-                    // Thêm delay nhỏ giữa các batch để tránh quá tải server
-                    if (i + batchSize < items.length) {
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                    }
-                }
-
-                return results;
-            };
-
-            const billsWithTerminalCodes = await processInBatches(billsWithStatus);
-            setBillsWithTerminalCode(billsWithTerminalCodes);
-
-            // Extract unique terminal prefixes for filtering
+            // Extract unique terminal prefixes
             const prefixes = Array.from(new Set(
-                billsWithTerminalCodes
+                data.billsWithTerminalCodes
                     .map(bill => bill.terminalPrefix)
                     .filter(prefix => prefix && prefix.length > 0)
             )).sort();
 
             setAvailableTerminalPrefixes(prefixes);
-            setSelectedTerminalPrefixes(prefixes); // Select all by default
+            setSelectedTerminalPrefixes(prefixes);
 
         } catch (error) {
-            console.error('Error loading terminal codes:', error);
-            // Set empty arrays khi có lỗi
+            console.error('Error fetching data:', error);
+            // Reset states on error
+            setAllBills([]);
+            setAllBillsWithStatus([]);
             setBillsWithTerminalCode([]);
             setAvailableTerminalPrefixes([]);
             setSelectedTerminalPrefixes([]);
         } finally {
+            setLoading(false);
             setLoadingTerminalCodes(false);
         }
     };
 
-    // Function to parse terminal dispatch code
-    const parseTerminalDispatchCode = (code: string) => {
-        if (!code) return {prefix: '', remaining: ''};
-
-        const parts = code.split('-');
-        if (parts.length >= 2) {
-            return {
-                prefix: parts[0], // 800
-                remaining: parts.slice(1).join('-') // A028S05-012
-            };
+    // Copy function
+    const handleCopyToClipboard = async (text: string) => {
+        const success = await copyToClipboard(text);
+        if (success) {
+            setCopiedBill(text);
+            setTimeout(() => setCopiedBill(''), 2000);
         }
-        return {prefix: code, remaining: ''};
     };
 
-    const calculateStoppedDays = (scanTime: string) => {
-        if (!scanTime) return 0;
-        const scanDate = new Date(scanTime);
-        const now = new Date();
-        const diffTime = Math.abs(now.getTime() - scanDate.getTime());
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays;
+    // Filter handlers
+    const handleScanTypeChange = (scanType: string, checked: boolean) => {
+        if (checked) {
+            setSelectedScanTypes(prev => [...prev, scanType]);
+        } else {
+            setSelectedScanTypes(prev => prev.filter(type => type !== scanType));
+        }
     };
 
-    const translations: { [key: string]: string } = {
-        "发件扫描": "Quét mã gửi hàng",
-        "快件签收": "Ký nhận CPN",
-        "中心到件": "Hàng đến TTTC",
-        "问题件扫描": "Quét kiện vấn đề",
-        "退件签收": "Đã chuyển hoàn",
-        "出仓扫描": "Quét phát hàng",
-        "重派": "Giao lại hàng",
-        "退件确认": "Đang chuyển hoàn",
-        "退件登记": "Đăng ký chuyển hoàn",
-        "建包扫描": "Đóng bao",
-        "到件扫描": "Quét hàng đến",
-        "拆包扫描": "Gỡ bao",
-        "快件揽收": "Nhận hàng",
-        "再次登记": "Đăng ký CH lần 2",
-        "退件扫描": "In đơn chuyển hoàn",
-        "完结": "Kết thúc",
-        "转单确认": "Xác nhận chuyển đơn"
-    };
-
-    const translateScanType = (scanTypeName: string) => {
-        return translations[scanTypeName] || scanTypeName;
-    };
-
-    // Check/Uncheck all functions for scan types
-    const selectAllScanTypes = () => {
-        setSelectedScanTypes([...scanTypeOptions]);
-    };
-
-    const deselectAllScanTypes = () => {
-        setSelectedScanTypes([]);
-    };
-
-    // Check/Uncheck all functions for terminal prefixes
-    const selectAllTerminalPrefixes = () => {
-        setSelectedTerminalPrefixes([...availableTerminalPrefixes]);
-    };
-
-    const deselectAllTerminalPrefixes = () => {
-        setSelectedTerminalPrefixes([]);
-    };
-
-    // Handle terminal prefix filter change
     const handleTerminalPrefixChange = (prefix: string, checked: boolean) => {
         if (checked) {
             setSelectedTerminalPrefixes(prev => [...prev, prefix]);
@@ -453,11 +198,23 @@ function Page(props: any) {
         }
     };
 
-    // Filter logic - updated to include terminal prefix filter
+    // Select/Deselect all functions
+    const selectAllScanTypes = () => setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
+    const deselectAllScanTypes = () => setSelectedScanTypes([]);
+    const selectAllTerminalPrefixes = () => setSelectedTerminalPrefixes([...availableTerminalPrefixes]);
+    const deselectAllTerminalPrefixes = () => setSelectedTerminalPrefixes([]);
+
+    const clearFilters = () => {
+        setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
+        setSelectedTerminalPrefixes([...availableTerminalPrefixes]);
+        setStoppedDays(0);
+    };
+
+    // Filter logic - optimized
     useEffect(() => {
         const applyFilters = async () => {
             setFilterLoading(true);
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise(resolve => setTimeout(resolve, 100));
 
             let filtered = [...billsWithTerminalCode];
 
@@ -496,72 +253,9 @@ function Page(props: any) {
     // Auto-select all scan types when data is loaded
     useEffect(() => {
         if (billsWithTerminalCode.length > 0 && selectedScanTypes.length === 0) {
-            setSelectedScanTypes([...scanTypeOptions]);
+            setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
         }
     }, [billsWithTerminalCode]);
-
-    useEffect(() => {
-        console.log('All bills:', allBills?.length || 0);
-        console.log('All bills with status:', allBillsWithTheLastStatus?.length || 0);
-        console.log('Bills with terminal codes:', billsWithTerminalCode?.length || 0);
-        console.log('Filtered bills:', filteredBills?.length || 0);
-    }, [allBills, allBillsWithTheLastStatus, billsWithTerminalCode, filteredBills]);
-
-    // Auto-detect token from localStorage/sessionStorage
-    useEffect(() => {
-        const tryGetStoredToken = () => {
-            // Common token keys
-            const tokenKeys = [
-                'authToken', 'token', 'access_token', 'accessToken',
-                'jwt', 'jwtToken', 'authorization', 'auth',
-                'user_token', 'session_token'
-            ];
-
-            for (const key of tokenKeys) {
-                const token = localStorage.getItem(key) || sessionStorage.getItem(key);
-                if (token && token.length > 10) { // Basic validation
-                    console.log(`Found token in ${key}:`, token.substring(0, 20) + '...');
-                    setAuthToken(token);
-                    return;
-                }
-            }
-        };
-
-        // Try to get token on component mount
-        tryGetStoredToken();
-
-        // Listen for storage changes (if user logs in to JMS in another tab)
-        const handleStorageChange = (e: StorageEvent) => {
-            if (e.key && e.newValue && e.key.toLowerCase().includes('token')) {
-                console.log(`Token updated in storage: ${e.key}`);
-                setAuthToken(e.newValue);
-            }
-        };
-
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
-    }, []);
-
-    const handleScanTypeChange = (scanType: string, checked: boolean) => {
-        if (checked) {
-            setSelectedScanTypes(prev => [...prev, scanType]);
-        } else {
-            setSelectedScanTypes(prev => prev.filter(type => type !== scanType));
-        }
-    };
-
-    const clearFilters = () => {
-        setSelectedScanTypes([...scanTypeOptions]);
-        setSelectedTerminalPrefixes([...availableTerminalPrefixes]);
-        setStoppedDays(0);
-    };
-
-    const getStatusColor = (daysStopped: number) => {
-        if (daysStopped >= 7) return 'text-red-600 bg-red-50';
-        if (daysStopped >= 3) return 'text-orange-600 bg-orange-50';
-        if (daysStopped >= 1) return 'text-yellow-600 bg-yellow-50';
-        return 'text-green-600 bg-green-50';
-    };
 
     // Pagination functions
     const goToPage = (page: number) => {
@@ -569,35 +263,11 @@ function Page(props: any) {
     };
 
     const goToPrevPage = () => {
-        if (currentPage > 1) {
-            setCurrentPage(currentPage - 1);
-        }
+        if (currentPage > 1) setCurrentPage(currentPage - 1);
     };
 
     const goToNextPage = () => {
-        if (currentPage < totalPages) {
-            setCurrentPage(currentPage + 1);
-        }
-    };
-
-    // Generate page numbers for pagination
-    const getPageNumbers = () => {
-        const pages = [];
-        const showPages = 5; // Number of pages to show
-
-        let startPage = Math.max(1, currentPage - Math.floor(showPages / 2));
-        let endPage = Math.min(totalPages, startPage + showPages - 1);
-
-        // Adjust start page if we're near the end
-        if (endPage - startPage < showPages - 1) {
-            startPage = Math.max(1, endPage - showPages + 1);
-        }
-
-        for (let i = startPage; i <= endPage; i++) {
-            pages.push(i);
-        }
-
-        return pages;
+        if (currentPage < totalPages) setCurrentPage(currentPage + 1);
     };
 
     return (
@@ -607,8 +277,6 @@ function Page(props: any) {
                 {/* Input Section */}
                 <div className="bg-white rounded-2xl shadow-xl p-8 mb-4 backdrop-blur-sm border border-white/20">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                        {/* Date Inputs */}
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-2">
                                 Ngày bắt đầu
@@ -651,8 +319,7 @@ function Page(props: any) {
                             >
                                 {loading ? (
                                     <>
-                                        <div
-                                            className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                                         Đang tải...
                                     </>
                                 ) : (
@@ -669,8 +336,7 @@ function Page(props: any) {
                 {/* Loading State */}
                 {loading && (
                     <div className="bg-white rounded-2xl shadow-xl p-12 mb-8 text-center">
-                        <div
-                            className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mb-4"></div>
+                        <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mb-4"></div>
                         <h3 className="text-xl font-semibold text-gray-700 mb-2">Đang tải dữ liệu...</h3>
                         <p className="text-gray-500">Vui lòng đợi trong giây lát</p>
                         {loadingTerminalCodes && (
@@ -682,14 +348,12 @@ function Page(props: any) {
                 {/* Filters */}
                 {billsWithTerminalCode.length > 0 && (
                     <div className="bg-white rounded-2xl shadow-xl p-8 mb-4 backdrop-blur-sm border border-white/20">
-                        <div
-                            className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                             <div className="flex items-center gap-2">
                                 <Filter className="h-6 w-6 text-blue-600"/>
                                 <h3 className="text-xl font-bold text-gray-800">Bộ lọc dữ liệu</h3>
-                                {loadingTerminalCodes && (
-                                    <div
-                                        className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                {filterLoading && (
+                                    <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                                 )}
                             </div>
                             <button
@@ -702,8 +366,7 @@ function Page(props: any) {
                         </div>
 
                         {/* Terminal Dispatch Code Filter */}
-                        <div
-                            className="bg-gradient-to-r from-emerald-50 to-teal-50 p-6 rounded-xl border border-emerald-200 mb-6">
+                        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 p-6 rounded-xl border border-emerald-200 mb-6">
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
                                     <Package className="h-5 w-5 text-emerald-600"/>
@@ -711,17 +374,14 @@ function Page(props: any) {
                                         Lọc theo mã đoạn:
                                     </label>
                                     {loadingTerminalCodes && (
-                                        <div
-                                            className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-500"></div>
+                                        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-500"></div>
                                     )}
                                 </div>
 
-                                {/* Select All / Deselect All buttons for terminal codes */}
                                 <div className="flex gap-2">
                                     <button
                                         onClick={selectAllTerminalPrefixes}
                                         className="flex items-center gap-1 px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Chọn tất cả"
                                     >
                                         <CheckSquare className="h-4 w-4"/>
                                         Chọn tất cả
@@ -729,7 +389,6 @@ function Page(props: any) {
                                     <button
                                         onClick={deselectAllTerminalPrefixes}
                                         className="flex items-center gap-1 px-3 py-1 bg-gray-500 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Bỏ chọn tất cả"
                                     >
                                         <Square className="h-4 w-4"/>
                                         Bỏ chọn tất cả
@@ -739,16 +398,14 @@ function Page(props: any) {
 
                             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                                 {availableTerminalPrefixes.map((prefix) => (
-                                    <label key={prefix}
-                                           className="flex items-center space-x-2 p-2 rounded-lg hover:bg-white/50 transition-colors cursor-pointer">
+                                    <label key={prefix} className="flex items-center space-x-2 p-2 rounded-lg hover:bg-white/50 transition-colors cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={selectedTerminalPrefixes.includes(prefix)}
                                             onChange={(e) => handleTerminalPrefixChange(prefix, e.target.checked)}
                                             className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                                         />
-                                        <span
-                                            className="text-sm text-gray-700 select-none font-mono font-medium">{prefix}</span>
+                                        <span className="text-sm text-gray-700 select-none font-mono font-medium">{prefix}</span>
                                     </label>
                                 ))}
                             </div>
@@ -760,8 +417,7 @@ function Page(props: any) {
                         </div>
 
                         {/* Journey Filter */}
-                        <div
-                            className="bg-gradient-to-r from-yellow-50 to-orange-50 p-6 rounded-xl border border-yellow-200 mb-6">
+                        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-6 rounded-xl border border-yellow-200 mb-6">
                             <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
                                 <Clock className="h-5 w-5 text-yellow-600"/>
                                 Theo dõi đơn hàng dừng hành trình:
@@ -782,8 +438,7 @@ function Page(props: any) {
                         </div>
 
                         {/* Scan Type Filter */}
-                        <div
-                            className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-200">
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-200">
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
                                     <Package className="h-5 w-5 text-blue-600"/>
@@ -791,17 +446,14 @@ function Page(props: any) {
                                         Lọc theo loại quét kiện cuối cùng:
                                     </label>
                                     {filterLoading && (
-                                        <div
-                                            className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                                        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
                                     )}
                                 </div>
 
-                                {/* Select All / Deselect All buttons */}
                                 <div className="flex gap-2">
                                     <button
                                         onClick={selectAllScanTypes}
                                         className="flex items-center gap-1 px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Chọn tất cả"
                                     >
                                         <CheckSquare className="h-4 w-4"/>
                                         Chọn tất cả
@@ -809,7 +461,6 @@ function Page(props: any) {
                                     <button
                                         onClick={deselectAllScanTypes}
                                         className="flex items-center gap-1 px-3 py-1 bg-gray-500 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
-                                        title="Bỏ chọn tất cả"
                                     >
                                         <Square className="h-4 w-4"/>
                                         Bỏ chọn tất cả
@@ -818,9 +469,8 @@ function Page(props: any) {
                             </div>
 
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                {scanTypeOptions.map((scanType) => (
-                                    <label key={scanType}
-                                           className="flex items-center space-x-2 p-2 rounded-lg hover:bg-white/50 transition-colors cursor-pointer">
+                                {SCAN_TYPE_OPTIONS.map((scanType) => (
+                                    <label key={scanType} className="flex items-center space-x-2 p-2 rounded-lg hover:bg-white/50 transition-colors cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={selectedScanTypes.includes(scanType)}
@@ -833,7 +483,7 @@ function Page(props: any) {
                             </div>
                             <div className="mt-4 px-4 py-2 bg-white rounded-lg">
                                 <span className="text-sm text-blue-600 font-medium">
-                                    Hiển thị: {selectedScanTypes.length}/{scanTypeOptions.length} loại quét
+                                    Hiển thị: {selectedScanTypes.length}/{SCAN_TYPE_OPTIONS.length} loại quét
                                 </span>
                             </div>
                         </div>
@@ -841,10 +491,9 @@ function Page(props: any) {
                 )}
 
                 {/* Statistics */}
-                {allBills && billsWithTerminalCode && (
+                {allBills.length > 0 && billsWithTerminalCode.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-4">
-                        <div
-                            className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-xl">
+                        <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-blue-100 text-sm uppercase">Tổng số đơn hàng</p>
@@ -854,8 +503,7 @@ function Page(props: any) {
                             </div>
                         </div>
 
-                        <div
-                            className="bg-gradient-to-r from-green-500 to-green-600 rounded-2xl p-6 text-white shadow-xl">
+                        <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-green-100 text-sm uppercase">Sau lọc</p>
@@ -865,8 +513,7 @@ function Page(props: any) {
                             </div>
                         </div>
 
-                        <div
-                            className="bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-2xl p-6 text-white shadow-xl">
+                        <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-emerald-100 text-sm uppercase">Mã đoạn khác nhau</p>
@@ -876,8 +523,7 @@ function Page(props: any) {
                             </div>
                         </div>
 
-                        <div
-                            className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-2xl p-6 text-white shadow-xl">
+                        <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-purple-100 text-sm uppercase">Trang hiện tại</p>
@@ -887,13 +533,12 @@ function Page(props: any) {
                             </div>
                         </div>
 
-                        <div
-                            className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-xl">
+                        <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-xl">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-orange-100 text-sm uppercase">Dừng hành trình</p>
                                     <p className="text-3xl font-bold">
-                                        {stoppedDays > 0 ? filteredBills.filter((item: any) => calculateStoppedDays(item.scanTime) >= stoppedDays).length : 0}
+                                        {stoppedDays > 0 ? filteredBills.filter((item) => calculateStoppedDays(item.scanTime) >= stoppedDays).length : 0}
                                     </p>
                                 </div>
                                 <AlertCircle className="h-12 w-12 text-orange-200"/>
@@ -906,7 +551,6 @@ function Page(props: any) {
                 {filteredBills.length > 0 && (
                     <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                         <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
-                            {/* Items per page selector */}
                             <div className="flex items-center gap-3">
                                 <label className="text-sm font-medium text-gray-700">Hiển thị:</label>
                                 <select
@@ -914,18 +558,14 @@ function Page(props: any) {
                                     onChange={(e) => setItemsPerPage(parseInt(e.target.value))}
                                     className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 >
-                                    <option value={50}>50 đơn/trang</option>
-                                    <option value={100}>100 đơn/trang</option>
-                                    <option value={200}>200 đơn/trang</option>
-                                    <option value={500}>500 đơn/trang</option>
+                                    {ITEMS_PER_PAGE_OPTIONS.map(option => (
+                                        <option key={option} value={option}>{option} đơn/trang</option>
+                                    ))}
                                 </select>
                             </div>
 
-                            {/* Page info */}
                             <div className="text-sm text-gray-600">
-                                Hiển
-                                thị {startIndex + 1} - {Math.min(endIndex, filteredBills.length)} của {filteredBills.length} đơn
-                                hàng
+                                Hiển thị {startIndex + 1} - {Math.min(endIndex, filteredBills.length)} của {filteredBills.length} đơn hàng
                             </div>
                         </div>
                     </div>
@@ -938,34 +578,18 @@ function Page(props: any) {
                             <table className="w-full text-sm">
                                 <thead className="bg-gradient-to-r from-gray-50 to-gray-100 sticky top-0 z-10">
                                 <tr>
-                                    <th className="px-6 py-4 uppercase text-left font-semibold text-gray-700">Mã vận
-                                        đơn
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-left font-semibold text-gray-700 min-w-[8rem]">Trạng
-                                        thái hiện tại
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[10rem]">Thời
-                                        gian thao tác
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">BC
-                                        thao tác
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700">Người
-                                        thao tác
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[10rem]">Loại
-                                        quét cuối cùng
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">Mã
-                                        đoạn
-                                    </th>
-                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">Số
-                                        ngày dừng
-                                    </th>
+                                    <th className="px-6 py-4 uppercase text-left font-semibold text-gray-700">Mã vận đơn</th>
+                                    <th className="px-6 py-4 uppercase text-left font-semibold text-gray-700 min-w-[8rem]">Trạng thái hiện tại</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[10rem]">Thời gian thao tác</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">BC thao tác</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700">Người thao tác</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[10rem]">Loại quét cuối cùng</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">Mã đoạn</th>
+                                    <th className="px-6 py-4 uppercase text-center font-semibold text-gray-700 max-w-[8rem]">Số ngày dừng</th>
                                 </tr>
                                 </thead>
                                 <tbody>
-                                {currentBills?.map((item: any, index: number) => {
+                                {currentBills.map((item, index) => {
                                     const daysStopped = calculateStoppedDays(item.scanTime);
                                     const statusColor = getStatusColor(daysStopped);
                                     const globalIndex = startIndex + index;
@@ -974,33 +598,28 @@ function Page(props: any) {
                                     const scanTypeColor = getScanTypeColor(translatedScanType);
 
                                     return (
-                                        <tr key={index}
-                                            className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${isEvenRow ? 'bg-white' : 'bg-gray-50/50'}`}>
+                                        <tr key={index} className={`border-b border-gray-100 hover:bg-blue-50 transition-colors ${isEvenRow ? 'bg-white' : 'bg-gray-50/50'}`}>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="font-mono font-medium text-gray-900 text-md">
-                                                        {item.billCode}
-                                                    </span>
+                                                        <span className="font-mono font-medium text-gray-900 text-md">
+                                                            {item.billCode}
+                                                        </span>
                                                     <button
-                                                        onClick={() => copyToClipboard(item.billCode)}
+                                                        onClick={() => handleCopyToClipboard(item.billCode)}
                                                         className="p-1 hover:bg-blue-100 rounded transition-colors group"
                                                         title="Copy mã vận đơn"
                                                     >
-                                                        <Copy
-                                                            className={`h-3 w-3 transition-colors ${copiedBill === item.billCode ? 'text-green-500' : 'text-gray-400 group-hover:text-blue-500'}`}/>
+                                                        <Copy className={`h-3 w-3 transition-colors ${copiedBill === item.billCode ? 'text-green-500' : 'text-gray-400 group-hover:text-blue-500'}`}/>
                                                     </button>
                                                     {copiedBill === item.billCode && (
-                                                        <span
-                                                            className="text-md text-green-500 font-medium animate-fade-in">
-                                                            Copied!
-                                                        </span>
+                                                        <span className="text-md text-green-500 font-medium animate-fade-in">
+                                                                Copied!
+                                                            </span>
                                                     )}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-700 text-md min-w-[8rem] max-w-[40rem]">
-                                                <div>
-                                                    {item.waybillTrackingContent}
-                                                </div>
+                                                <div>{item.waybillTrackingContent}</div>
                                             </td>
                                             <td className="px-6 py-4 text-gray-600 text-center font-mono text-md max-w-[10rem]">
                                                 {item.scanTime}
@@ -1009,36 +628,31 @@ function Page(props: any) {
                                                 {item.scanNetworkCode}
                                             </td>
                                             <td className="px-6 py-4 text-gray-700 text-md text-center items-center max-w-28">
-                                                <div className="truncate"
-                                                     title={item.scanByName === "机器人" ? "Đang chuyển hoàn" : item.scanByName}>
+                                                <div className="truncate" title={item.scanByName === "机器人" ? "Đang chuyển hoàn" : item.scanByName}>
                                                     {item.scanByName === "机器人" ? "Đang chuyển hoàn" : item.scanByName}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 max-w-[10rem]">
-                                                <span
-                                                    className={`px-2 py-1 rounded-md text-xs text-center block w-full truncate font-medium ${scanTypeColor}`}
-                                                    title={translatedScanType}>
-                                                    {translatedScanType}
-                                                </span>
+                                                    <span className={`px-2 py-1 rounded-md text-xs text-center block w-full truncate font-medium ${scanTypeColor}`} title={translatedScanType}>
+                                                        {translatedScanType}
+                                                    </span>
                                             </td>
                                             <td className="px-6 py-4 text-center max-w-[8rem]">
                                                 {loadingTerminalCodes ? (
                                                     <div className="flex justify-center">
-                                                        <div
-                                                            className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-500"></div>
+                                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-500"></div>
                                                     </div>
                                                 ) : (
                                                     <div className="text-center">
                                                         {item.terminalPrefix && (
-                                                            <span
-                                                                className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-md text-xs font-mono font-medium block mb-1">
-                                                                {item.terminalPrefix}
-                                                            </span>
+                                                            <span className="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-md text-xs font-mono font-medium block mb-1">
+                                                                    {item.terminalPrefix}
+                                                                </span>
                                                         )}
                                                         {item.terminalRemaining && (
                                                             <span className="text-xs text-gray-500 font-mono">
-                                                                {item.terminalRemaining}
-                                                            </span>
+                                                                    {item.terminalRemaining}
+                                                                </span>
                                                         )}
                                                         {!item.terminalDispatchCode && (
                                                             <span className="text-xs text-gray-400">--</span>
@@ -1047,10 +661,9 @@ function Page(props: any) {
                                                 )}
                                             </td>
                                             <td className="px-6 py-4 text-center max-w-[8rem]">
-                                                <span
-                                                    className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
-                                                    {daysStopped} ngày
-                                                </span>
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                                                        {daysStopped} ngày
+                                                    </span>
                                             </td>
                                         </tr>
                                     );
@@ -1058,7 +671,7 @@ function Page(props: any) {
                                 </tbody>
                             </table>
 
-                            {filteredBills?.length === 0 && billsWithTerminalCode?.length > 0 && (
+                            {filteredBills.length === 0 && billsWithTerminalCode.length > 0 && (
                                 <div className="text-center p-12 text-gray-500">
                                     <Package className="h-16 w-16 text-gray-300 mx-auto mb-4"/>
                                     <h3 className="text-xl font-semibold mb-2">Không tìm thấy dữ liệu</h3>
@@ -1091,7 +704,7 @@ function Page(props: any) {
                                 </button>
 
                                 <div className="flex items-center gap-1">
-                                    {getPageNumbers().map((pageNum) => (
+                                    {getPageNumbers(currentPage, totalPages, PAGINATION_SHOW_PAGES).map((pageNum) => (
                                         <button
                                             key={pageNum}
                                             onClick={() => goToPage(pageNum)}
