@@ -17,7 +17,7 @@ interface OrderData {
     waybill: string;
     terminalDispatchCode: string;
     scanTypeName: string;
-    // Thêm các field khác theo cần thiết
+    scanNetworkCode: string; // THÊM MỚI
 }
 
 // Interface cho nhóm đơn hàng
@@ -25,9 +25,9 @@ interface GroupedOrder {
     waybill: string;
     terminalDispatchCode: string;
     scanTypeName: string;
-    groupLevel1: string; // Mã thứ 2 (A028M08)
-    groupLevel2: string; // Mã thứ 3 (027)
-    groupColor: string; // Màu của nhóm
+    groupLevel1: string;
+    groupLevel2: string;
+    groupColor: string;
 }
 
 export default function BillsTrackingSection({bills, authToken, isBillTracking}: BillsTrackingSectionProps) {
@@ -44,11 +44,15 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     const [filteredBills, setFilteredBills] = useState<string[]>([]);
     const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
 
-    // Filter states - chỉ giữ lại scanTypeName filter
+    // Filter states
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
 
-    // Màu sắc cho các nhóm - flat design
+    // THÊM MỚI: Filter cho scanNetworkCode
+    const [show028M08, setShow028M08] = useState<boolean>(true);
+    const [showNon028M08, setShowNon028M08] = useState<boolean>(true);
+
+    // Màu sắc cho các nhóm
     const groupColors = [
         'bg-blue-50 border-blue-200',
         'bg-emerald-50 border-emerald-200',
@@ -62,48 +66,42 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         'bg-teal-50 border-teal-200'
     ];
 
-    // Kiểm tra xem có nên hiển thị loading không
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
 
-    // Cập nhật billsList khi bills thay đổi
     useEffect(() => {
         setBillsList(bills);
         setFilteredBills(bills);
     }, [bills]);
 
-    // Effect để load dữ liệu đơn hàng khi không phải bill tracking
     useEffect(() => {
         if (!isBillTracking && bills.length > 0) {
             loadOrdersData();
         }
     }, [bills, isBillTracking]);
 
-    // Effect để apply filter khi selectedStatuses thay đổi
+    // THÊM show028M08 và showNon028M08 vào dependencies
     useEffect(() => {
         if (!isBillTracking) {
             applyStatusFilter();
         }
-    }, [selectedStatuses, groupedOrders]);
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08]);
 
-    // Hàm phân tích terminalDispatchCode và tạo nhóm
     const parseTerminalCode = (code: string) => {
         const parts = code.split('-');
         if (parts.length >= 3) {
             return {
-                level1: parts[1], // A028M08
-                level2: parts[2]  // 027
+                level1: parts[1],
+                level2: parts[2]
             };
         }
         return { level1: '', level2: '' };
     };
 
-    // Hàm tạo nhóm và gán màu
     const createGroupedOrders = (orders: OrderData[]): GroupedOrder[] => {
         const grouped: GroupedOrder[] = [];
         const groupColorMap = new Map<string, string>();
         let colorIndex = 0;
 
-        // Nhóm theo level1 trước (mã thứ 2)
         const level1Groups = new Map<string, OrderData[]>();
 
         orders.forEach(order => {
@@ -116,9 +114,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             level1Groups.get(level1Key)!.push(order);
         });
 
-        // Xử lý từng nhóm level1
         level1Groups.forEach((level1Orders, level1Key) => {
-            // Nhóm theo level2 trong nhóm level1
             const level2Groups = new Map<string, OrderData[]>();
 
             level1Orders.forEach(order => {
@@ -131,7 +127,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                 level2Groups.get(level2Key)!.push(order);
             });
 
-            // Gán màu cho từng nhóm level2
             level2Groups.forEach((level2Orders, level2Key) => {
                 if (!groupColorMap.has(level2Key)) {
                     groupColorMap.set(level2Key, groupColors[colorIndex % groupColors.length]);
@@ -157,14 +152,12 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         return grouped;
     };
 
-    // Hàm load dữ liệu đơn hàng
     const loadOrdersData = async () => {
         setIsLoadingOrders(true);
         try {
             const mockData: OrderData[] = [];
             const promises = bills.map(async (bill) => {
                 try {
-                    // Call để lấy order detail
                     const orderResp: any = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail", {
                         "waybillNo": bill,
                         "countryId": "1"
@@ -176,7 +169,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         }
                     });
 
-                    // Call để lấy tracking info
                     const trackingResp: any = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList", {
                         "keywordList": [bill],
                         "trackingTypeEnum": "WAYBILL",
@@ -192,29 +184,28 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                     const orderData: OrderData = {
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
-                        scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái'
+                        scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
+                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '' // THÊM MỚI
                     };
 
                     mockData.push(orderData);
                 } catch (error) {
                     console.error(`Error loading data for bill ${bill}:`, error);
-                    // Thêm dữ liệu rỗng nếu lỗi
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: '',
-                        scanTypeName: 'Lỗi tải dữ liệu'
+                        scanTypeName: 'Lỗi tải dữ liệu',
+                        scanNetworkCode: '' // THÊM MỚI
                     });
                 }
             });
 
             await Promise.all(promises);
 
-            // Tạo danh sách trạng thái có sẵn
             const statuses = Array.from(new Set(mockData.map(order => order.scanTypeName).filter(status => status)));
             setAvailableStatuses(statuses);
-            setSelectedStatuses(statuses); // Mặc định chọn tất cả
+            setSelectedStatuses(statuses);
 
-            // Tạo nhóm và gán màu
             const grouped = createGroupedOrders(mockData);
             setGroupedOrders(grouped);
             setOrdersData(mockData);
@@ -226,26 +217,39 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         }
     };
 
-    // Hàm áp dụng filter theo trạng thái
+    // CẬP NHẬT: Thêm logic filter theo scanNetworkCode
     const applyStatusFilter = () => {
         let filtered = groupedOrders;
 
-        // Filter theo trạng thái được chọn
+        // Filter theo trạng thái
         if (selectedStatuses.length > 0 && selectedStatuses.length < availableStatuses.length) {
             filtered = filtered.filter(order => selectedStatuses.includes(order.scanTypeName));
         }
+
+        // Filter theo scanNetworkCode
+        filtered = filtered.filter(order => {
+            const orderData = ordersData.find(o => o.waybill === order.waybill);
+            if (!orderData) return true;
+
+            const is028M08 = orderData.scanNetworkCode === '028M08';
+
+            // Nếu là 028M08 nhưng không show028M08 thì loại bỏ
+            if (is028M08 && !show028M08) return false;
+            // Nếu không phải 028M08 nhưng không showNon028M08 thì loại bỏ
+            if (!is028M08 && !showNon028M08) return false;
+
+            return true;
+        });
 
         const filteredWaybills = filtered.map(order => order.waybill);
         setFilteredBills(filteredWaybills);
         setBillsList(filteredWaybills);
 
-        // Reset selected code nếu không còn trong danh sách filter
         if (selectedCode && !filteredWaybills.includes(selectedCode)) {
             setSelectedCode(null);
         }
     };
 
-    // Hàm xử lý checkbox trạng thái
     const handleStatusChange = (status: string, checked: boolean) => {
         if (checked) {
             setSelectedStatuses(prev => [...prev, status]);
@@ -254,7 +258,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         }
     };
 
-    // Hàm chọn/bỏ chọn tất cả trạng thái
     const handleSelectAllStatuses = (selectAll: boolean) => {
         if (selectAll) {
             setSelectedStatuses([...availableStatuses]);
@@ -263,16 +266,13 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         }
     };
 
-    // Hàm kiểm tra mã vận đơn có phải là 12 chữ số không
     const isNumericCode = (code: string) => {
         return /^\d{12}$/.test(code.trim());
     };
 
-    // Hàm xử lý input change
     const handleInputChange = (value: string) => {
         setInputCode(value);
 
-        // Tách các mã vận đơn từ input
         const codes = value.split(/[\s\n,]+/).filter(code => code.trim().length > 0);
         const validCodes: string[] = [];
         let remainingText = "";
@@ -281,12 +281,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             const trimmedCode = code.trim();
 
             if (isNumericCode(trimmedCode)) {
-                // Nếu là mã 12 số, thêm vào danh sách valid
                 validCodes.push(trimmedCode);
             } else if (trimmedCode.length > 0) {
-                // Nếu không phải mã 12 số, giữ lại trong input
                 if (trimmedCode.length >= 12 && /^\d+$/.test(trimmedCode)) {
-                    // Nếu là chuỗi số dài hơn 12, tách thành các mã 12 số
                     for (let i = 0; i < trimmedCode.length; i += 12) {
                         const chunk = trimmedCode.substr(i, 12);
                         if (chunk.length === 12) {
@@ -296,7 +293,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         }
                     }
                 } else {
-                    // Các trường hợp khác (có chữ, chưa đủ 12 số)
                     remainingText += (remainingText ? " " : "") + trimmedCode;
                 }
             }
@@ -304,62 +300,47 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
         setParsedCodes(validCodes);
 
-        // Cập nhật lại input với text còn lại
         if (remainingText !== value.replace(/[\s\n,]+/g, ' ').trim()) {
             setInputCode(remainingText);
         }
     };
 
-    // Hàm xóa mã vận đơn đã parse
     const removeParsedCode = (codeToRemove: string) => {
         setParsedCodes(prev => prev.filter(code => code !== codeToRemove));
     };
 
-    // Hàm xử lý tra cứu
     const handleSearch = () => {
         if (parsedCodes.length > 0) {
-            // Thay thế danh sách bills bằng mảng mới (không chứa dữ liệu cũ)
             setBillsList([...parsedCodes]);
-
-            // Tự động chọn mã đầu tiên trong danh sách mới
             setSelectedCode(parsedCodes[0]);
         }
     };
 
-    // Hàm xử lý khi click vào khung search
     const handleSearchClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         setIsSearchExpanded(true);
     };
 
-    // Hàm xử lý khi click vào danh sách đơn (chỉ thu nhỏ khi click vào container, không phải vào các item)
     const handleBillsListClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         setIsSearchExpanded(false);
     };
 
-    // Hàm xử lý khi click vào mã vận đơn
     const handleBillClick = (code: string, e: React.MouseEvent) => {
         e.stopPropagation();
         setSelectedCode(code);
-        // Thu nhỏ sidebar khi chọn mã vận đơn
         setIsSearchExpanded(false);
     };
 
-    // Loading Component
     const LoadingSpinner = () => (
         <div className="flex h-screen bg-gray-50">
-            {/* Sidebar loading */}
             <div className="w-80 border-r border-gray-200 bg-white flex flex-col">
-                {/* Header cố định */}
                 <div className="p-6 border-b border-gray-200 bg-red-500 flex-shrink-0">
                     <h1 className="text-white font-semibold text-xl tracking-tight">Tra cứu vận đơn</h1>
                 </div>
 
-                {/* Loading content */}
                 <div className="flex-1 flex items-center justify-center">
                     <div className="text-center">
-                        {/* Spinning animation */}
                         <div className="relative">
                             <div className="w-12 h-12 border-3 border-red-200 border-t-red-500 rounded-full animate-spin mx-auto mb-4"></div>
                         </div>
@@ -367,7 +348,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         <p className="text-slate-700 font-medium mb-2">Đang tải dữ liệu...</p>
                         <p className="text-slate-500 text-sm">Vui lòng đợi trong giây lát</p>
 
-                        {/* Loading dots animation */}
                         <div className="flex justify-center mt-4 space-x-1">
                             <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce"></div>
                             <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
@@ -377,7 +357,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                 </div>
             </div>
 
-            {/* Main content loading */}
             <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
                     <div className="text-slate-300 text-5xl mb-4">📦</div>
@@ -387,14 +366,13 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         </div>
     );
 
-    // Filter Bar Component - chỉ filter theo scanTypeName
+    // CẬP NHẬT FilterBar: Thêm filter cho scanNetworkCode
     const FilterBar = () => (
         <div className="bg-white border-b border-gray-200 p-4">
             <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-slate-700">Lọc theo trạng thái:</span>
 
-                    {/* Checkbox chọn tất cả */}
                     <label className="flex items-center gap-2 text-sm">
                         <input
                             type="checkbox"
@@ -406,7 +384,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                     </label>
                 </div>
 
-                {/* Danh sách checkbox trạng thái */}
                 <div className="flex flex-wrap items-center gap-3">
                     {availableStatuses.map(status => (
                         <label key={status} className="flex items-center gap-2 text-sm">
@@ -421,7 +398,33 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                     ))}
                 </div>
 
-                {/* Hiển thị số lượng kết quả */}
+                {/* THÊM MỚI: Filter theo scanNetworkCode */}
+                <div className="h-6 w-px bg-gray-300"></div>
+
+                <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-slate-700">Mã mạng lưới:</span>
+
+                    <label className="flex items-center gap-2 text-sm">
+                        <input
+                            type="checkbox"
+                            checked={show028M08}
+                            onChange={(e) => setShow028M08(e.target.checked)}
+                            className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 focus:ring-1"
+                        />
+                        <span className="text-slate-700 font-medium">028M08</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-sm">
+                        <input
+                            type="checkbox"
+                            checked={showNon028M08}
+                            onChange={(e) => setShowNon028M08(e.target.checked)}
+                            className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 focus:ring-1"
+                        />
+                        <span className="text-slate-700">Khác</span>
+                    </label>
+                </div>
+
                 <div className="ml-auto text-sm text-slate-600 font-medium">
                     {isLoadingOrders ? "Đang tải..." : `${filteredBills.length}/${bills.length} đơn`}
                 </div>
@@ -429,14 +432,12 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         </div>
     );
 
-    // Hiển thị loading nếu cần
     if (shouldShowLoading) {
         return <LoadingSpinner/>;
     }
 
     return (
         <div className="flex h-screen bg-gray-50">
-            {/* Filter Bar - chỉ hiển thị khi isBillTracking = false */}
             {!isBillTracking && (
                 <div className="absolute top-0 left-0 right-0 z-10">
                     <FilterBar/>
@@ -444,11 +445,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             )}
 
             <div className={`flex flex-1 w-full ${!isBillTracking ? 'pt-16' : ''}`}>
-                {/* Sidebar tra cứu */}
                 <div className={`border-r border-gray-200 bg-white flex flex-col transition-all duration-300 ease-in-out ${
                     isSearchExpanded ? 'w-80' : 'w-56'
                 }`}>
-                    {/* Header cố định */}
                     <div className="p-6 border-b border-gray-200 bg-red-500 flex-shrink-0">
                         <h1 className="text-white font-semibold text-xl tracking-tight">
                             {isBillTracking ? "Tra cứu vận đơn" : "MÃ VẬN ĐƠN"}
@@ -480,7 +479,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                 onClick={(e) => e.stopPropagation()}
                             />
 
-                            {/* Hiển thị các mã đã được parse - chỉ khi expanded với thanh scroll */}
                             {isSearchExpanded && parsedCodes.length > 0 && (
                                 <div className="mt-3 max-h-32 overflow-y-auto space-y-2 pr-1">
                                     {parsedCodes.map((code, index) => (
@@ -501,7 +499,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                 </div>
                             )}
 
-                            {/* Hiển thị số lượng mã khi thu nhỏ */}
                             {!isSearchExpanded && parsedCodes.length > 0 && (
                                 <div className="mt-2 text-xs text-blue-600 font-medium">
                                     {parsedCodes.length} mã đã nhập
@@ -527,7 +524,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         </div>
                     )}
 
-                    {/* Danh sách đơn - có scroll riêng */}
                     <div
                         className="flex-1 overflow-hidden flex flex-col cursor-pointer"
                         onClick={handleBillsListClick}
@@ -583,7 +579,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                             }`}
                                         >
                                             <div className="text-center font-mono font-semibold">{code}</div>
-                                            {/* Hiển thị thông tin thêm khi không phải bill tracking */}
                                             {!isBillTracking && groupedOrder && !isSearchExpanded && (
                                                 <div className="mt-2 text-xs text-slate-600 text-center">
                                                     {groupedOrder.groupLevel1 && (
@@ -601,7 +596,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                     </div>
                 </div>
 
-                {/* Nội dung chính - chia thành 2 cột */}
                 <div className="flex-1 flex">
                     {!selectedCode ? (
                         <div className="flex-1 flex items-center justify-center">
@@ -617,19 +611,15 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         </div>
                     ) : (
                         <>
-                            {/* Cột trái */}
                             <div className="max-w-1/4">
                                 <OrderDetail key={selectedCode} waybill={selectedCode} authToken={authToken}/>
                             </div>
 
-                            {/* Cột phải - chia làm 2 khung trên dưới */}
                             <div className="w-full p-4 flex flex-col gap-3">
-                                {/* Khung trên - Lịch sử POD */}
                                 <div className="h-2/3">
                                     <PodHistory key={`pod-${selectedCode}`} waybill={selectedCode} authToken={authToken}/>
                                 </div>
 
-                                {/* Khung dưới - Lịch sử vấn đề */}
                                 <div className="h-1/3">
                                     <IssueHistory key={`issue-${selectedCode}`} waybill={selectedCode} authToken={authToken}/>
                                 </div>

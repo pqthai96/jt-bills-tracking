@@ -422,7 +422,7 @@ export default function Home() {
                     </Link>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid md:grid-cols-3 gap-4">
                     {/* Theo dõi đơn */}
                     <Link
                         href={isTokenValid ? "/bill-tracking" : "#"}
@@ -457,6 +457,24 @@ export default function Home() {
                     >
                         <FileText className="h-5 w-5"/>
                         <span className="text-center">XUẤT KHO</span>
+                    </Link>
+
+                    {/* Xuất kho đơn tồn */}
+                    <Link
+                        href={isTokenValid ? "/reverse-bills" : "#"}
+                        className={`group relative overflow-hidden bg-gradient-to-r from-amber-500 to-yellow-500 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-200 flex items-center justify-center gap-3 shadow-lg transform ${
+                            isTokenValid
+                                ? 'hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl hover:-translate-y-0.5 cursor-pointer'
+                                : 'opacity-40 cursor-not-allowed'
+                        }`}
+                        onClick={(e) => {
+                            if (!isTokenValid) {
+                                e.preventDefault();
+                            }
+                        }}
+                    >
+                        <Package className="h-5 w-5"/>
+                        <span className="text-center">XUẤT KHO ĐƠN TỒN</span>
                     </Link>
                 </div>
 
