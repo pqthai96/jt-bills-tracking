@@ -15,14 +15,15 @@ function Page() {
     // Tạo startTime và endTime cho ngày hiện tại
     const getCurrentDateRange = () => {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const year = yesterday.getFullYear();
+        const month = String(yesterday.getMonth() + 1).padStart(2, '0');
+        const day = String(yesterday.getDate()).padStart(2, '0');
 
         const startTime = `${year}-${month}-${day} 00:00:00`;
         const endTime = `${year}-${month}-${day} 23:59:59`;
-        // const startTime = `2025-10-26 00:00:00`;
-        // const endTime = `2025-10-26 23:59:59`;
 
         return {startTime, endTime};
     };
