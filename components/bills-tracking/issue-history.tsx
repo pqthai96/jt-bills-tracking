@@ -62,15 +62,24 @@ function IssueHistory({
             setLoading(false);
             return;
         }
+
         setLoading(true);
         setIssueHistory([]);
-        axios.post(
-            "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
-            { current: 1, size: 100, waybillId: waybill, countryId: "1" },
-            { headers: { authToken, lang: 'VN', langType: 'VN' } }
-        ).then((resp: any) => {
-            setIssueHistory(resp.data?.data?.records ?? []);
-        }).finally(() => setLoading(false));
+
+        const fetchData = async () => {
+            try {
+                const resp: any = await axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
+                    { current: 1, size: 100, waybillId: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                );
+                setIssueHistory(resp.data?.data?.records ?? []);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchData();
     }, [waybill]);
 
     return (
