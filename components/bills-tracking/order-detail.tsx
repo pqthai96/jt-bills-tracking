@@ -1,203 +1,193 @@
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from "axios";
+import {
+    User, MapPin, CreditCard, Truck, Tag,
+} from "lucide-react";
+import { DetailCache } from "@/components/bills-tracking/bills-tracking-section";
 
-function OrderDetail({waybill, authToken}: { waybill: any, authToken: string }) {
+// ─── Font loader ──────────────────────────────────────────────────────────────
+const FontLoader = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap');
+        body, body * { font-family: 'Nunito', 'Segoe UI', Arial, sans-serif; }
+    `}</style>
+);
 
-    const [orderDetailData, setOrderDetailData] = useState<any>("");
-
-    useEffect(() => {
-        axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail", {
-                "waybillNo": waybill,
-                "countryId": "1"
-            },
-            {
-                headers: {
-                    authToken: authToken,
-                    lang: 'VN',
-                    langType: 'VN',
-                }
-            }).then((resp: any) => setOrderDetailData(resp.data.data.details));
-    }, [])
-
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+function SkeletonRow() {
     return (
-        <div className="flex-1 p-4 bg-gray-50 flex flex-col h-full">
-            {/* Header với mã đơn - cố định */}
-            <div className="bg-white border border-gray-200 p-6 mb-6 flex-shrink-0">
-                <div className="border-l-4 border-red-500 pl-4">
-                    <h2 className="text-2xl font-semibold text-slate-800 tracking-tight">
-                        VẬN ĐƠN: <span className="text-amber-600 font-mono">{waybill}</span>
-                    </h2>
-                    <h2 className="text-xl font-medium text-slate-700 mt-2">
-                        MÃ ĐOẠN: <span className="text-purple-600 font-mono">{orderDetailData.terminalDispatchCode}</span>
-                    </h2>
-                </div>
+        <div className="flex gap-2 py-2 border-b border-slate-50 last:border-0">
+            <div className="h-3 bg-slate-200 rounded animate-pulse w-28 flex-shrink-0" />
+            <div className="h-3 bg-slate-100 rounded animate-pulse flex-1" />
+        </div>
+    );
+}
+
+function SectionSkeleton() {
+    return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+                <div className="w-6 h-6 bg-slate-100 rounded-md animate-pulse" />
+                <div className="h-3.5 bg-slate-200 rounded animate-pulse w-28" />
             </div>
-
-            {/* Container cho các khung thông tin - có thể scroll */}
-            <div className="flex-1 overflow-y-auto">
-                <div className="space-y-4">
-                    {/* Thông tin người gửi */}
-                    <div className="bg-white border border-gray-200 p-5">
-                        <div className="mb-4">
-                            <h3 className="font-semibold text-lg text-slate-800 tracking-tight">
-                                Thông tin người gửi
-                            </h3>
-                            <div className="w-12 h-1 bg-emerald-500 mt-2"></div>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Người gửi:</span>
-                                <span className="text-slate-800 font-medium">{orderDetailData.senderName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Shop name:</span>
-                                <span className="text-slate-800 font-medium">{orderDetailData.sellerName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Điện thoại:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.senderMobilePhone}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Địa chỉ:</span>
-                                <span className="text-slate-800 leading-relaxed">
-                                    {orderDetailData.senderDetailedAddress},{" "}
-                                    {orderDetailData.senderAreaName},{" "}
-                                    {orderDetailData.senderCityName},{" "}
-                                    {orderDetailData.senderProvinceName},{" "}
-                                    {orderDetailData.senderCountryName}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Thông tin người nhận */}
-                    <div className="bg-white border border-gray-200 p-5">
-                        <div className="mb-4">
-                            <h3 className="font-semibold text-lg text-slate-800 tracking-tight">
-                                Thông tin người nhận
-                            </h3>
-                            <div className="w-12 h-1 bg-blue-500 mt-2"></div>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Người nhận:</span>
-                                <span className="text-slate-800 font-medium">{orderDetailData.receiverName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Điện thoại:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.receiverMobilePhone}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[120px]">Địa chỉ:</span>
-                                <span className="text-slate-800 leading-relaxed">
-                                    {orderDetailData.receiverDetailedAddress},{" "}
-                                    {orderDetailData.receiverAreaName},{" "}
-                                    {orderDetailData.receiverCityName},{" "}
-                                    {orderDetailData.receiverProvinceName},{" "}
-                                    {orderDetailData.receiverCountryName}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Thông tin cơ bản */}
-                    <div className="bg-white border border-gray-200 p-5">
-                        <div className="mb-4">
-                            <h3 className="font-semibold text-lg text-slate-800 tracking-tight">
-                                Thông tin cơ bản
-                            </h3>
-                            <div className="w-12 h-1 bg-purple-500 mt-2"></div>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Nguồn đơn đặt:</span>
-                                <span className="text-slate-800">{orderDetailData.orderSourceName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Phân loại hàng hoá:</span>
-                                <span className="text-slate-800">{orderDetailData.goodsTypeName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Thời gian lấy đơn đặt:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.pickTime}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Nội dung hàng hoá:</span>
-                                <span className="text-slate-800">{orderDetailData.goodsName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Giá trị hàng hoá:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.insuredAmount}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Chi tiết gửi hàng */}
-                    <div className="bg-white border border-gray-200 p-5">
-                        <div className="mb-4">
-                            <h3 className="font-semibold text-lg text-slate-800 tracking-tight">
-                                Chi tiết gửi hàng
-                            </h3>
-                            <div className="w-12 h-1 bg-orange-500 mt-2"></div>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[200px]">Bưu cục gửi:</span>
-                                <span className="text-slate-800">{orderDetailData.pickNetworkName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[200px]">Người gửi:</span>
-                                <span className="text-slate-800">{orderDetailData.customerName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[200px]">Mã KH:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.customerCode}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[200px]">Loại vận chuyển:</span>
-                                <span className="text-slate-800">{orderDetailData.expressTypeName}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[200px]">Nhân viên lấy hàng:</span>
-                                <span className="text-slate-800">
-                                    <span className="font-mono">{orderDetailData.staffCode}</span> - {orderDetailData.staffName}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Thông tin thanh toán */}
-                    <div className="bg-white border border-gray-200 p-5">
-                        <div className="mb-4">
-                            <h3 className="font-semibold text-lg text-slate-800 tracking-tight">
-                                Thông tin thanh toán
-                            </h3>
-                            <div className="w-12 h-1 bg-teal-500 mt-2"></div>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Trọng lượng tính phí:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.packageChargeWeight}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Dài rộng cao (cm):</span>
-                                <span className="text-slate-800 font-mono">
-                                    {orderDetailData.packageLength}×{orderDetailData.packageWide}×{orderDetailData.packageHigh}
-                                </span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Trọng lượng quy đổi:</span>
-                                <span className="text-slate-800 font-mono">{orderDetailData.packageVolume}</span>
-                            </div>
-                            <div className="flex flex-wrap items-start">
-                                <span className="text-slate-600 font-medium min-w-[180px]">Phương thức thanh toán:</span>
-                                <span className="text-slate-800">{orderDetailData.paymentModeName}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div className="px-5 py-3 space-y-0.5">
+                {Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} />)}
             </div>
         </div>
+    );
+}
+
+// ─── Info Row ─────────────────────────────────────────────────────────────────
+function InfoRow({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
+    return (
+        <div className="flex flex-wrap items-start gap-1 py-2 border-b border-slate-50 last:border-0">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wide min-w-[130px]">{label}</span>
+            <span className={`text-xs text-slate-700 font-semibold flex-1 ${mono ? 'font-mono' : ''}`}>
+                {value || <span className="text-slate-300 italic">—</span>}
+            </span>
+        </div>
+    );
+}
+
+function SectionCard({ title, accent, icon: Icon, children }: {
+    title: string;
+    accent: string;
+    icon: React.ElementType;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className={`px-5 py-3.5 border-b border-slate-100 flex items-center gap-2 ${accent}`}>
+                <Icon className="w-4 h-4" />
+                <span className="font-bold text-sm">{title}</span>
+            </div>
+            <div className="px-5 py-3">
+                {children}
+            </div>
+        </div>
+    );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+function OrderDetail({
+                         waybill,
+                         authToken,
+                         cache,
+                     }: {
+    waybill: any;
+    authToken: string;
+    cache?: DetailCache;
+}) {
+    const [d, setD]           = useState<any>(cache?.orderDetail ?? null);
+    const [loading, setLoading] = useState(!cache?.orderDetail);
+
+    useEffect(() => {
+        // Nếu cache đã có → hiện ngay, không fetch
+        if (cache?.orderDetail) {
+            setD(cache.orderDetail);
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        setD(null);
+
+        const fetchData = async () => {
+            try {
+                const resp: any = await axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                    { waybillNo: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                );
+                setD(resp.data.data.details);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchData();
+    }, [waybill]);
+
+    const senderAddress   = d ? [d.senderDetailedAddress, d.senderAreaName, d.senderCityName, d.senderProvinceName, d.senderCountryName].filter(Boolean).join(', ') : '';
+    const receiverAddress = d ? [d.receiverDetailedAddress, d.receiverAreaName, d.receiverCityName, d.receiverProvinceName, d.receiverCountryName].filter(Boolean).join(', ') : '';
+
+    return (
+        <>
+            <FontLoader />
+            <div className="bg-slate-50 flex flex-col h-full">
+
+                {/* Header */}
+                <div className="bg-white border-b border-slate-200 px-5 py-4 flex-shrink-0">
+                    <div className="flex items-center gap-2 mb-1">
+                        <div className="w-1 h-8 bg-blue-500 rounded-full" />
+                        <div>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Vận đơn</p>
+                            <p className="text-lg font-bold text-slate-800 font-mono tracking-wide">{waybill}</p>
+                        </div>
+                    </div>
+                    {d?.terminalDispatchCode && (
+                        <div className="flex items-center gap-2 mt-2">
+                            <div className="w-1 h-6 bg-violet-400 rounded-full" />
+                            <div>
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Mã đoạn</p>
+                                <p className="text-sm font-bold text-violet-600 font-mono">{d.terminalDispatchCode}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Scrollable sections */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {loading ? (
+                        // Skeleton: hiện ngay, không blank trắng
+                        <>
+                            <SectionSkeleton />
+                            <SectionSkeleton />
+                            <SectionSkeleton />
+                            <SectionSkeleton />
+                        </>
+                    ) : (
+                        <>
+                            <SectionCard title="Người gửi" accent="text-emerald-600 bg-emerald-50" icon={User}>
+                                <InfoRow label="Tên người gửi" value={d?.senderName} />
+                                <InfoRow label="Shop name"     value={d?.sellerName} />
+                                <InfoRow label="Điện thoại"    value={d?.senderMobilePhone} mono />
+                                <InfoRow label="Địa chỉ"       value={senderAddress} />
+                            </SectionCard>
+
+                            <SectionCard title="Người nhận" accent="text-blue-600 bg-blue-50" icon={MapPin}>
+                                <InfoRow label="Tên người nhận" value={d?.receiverName} />
+                                <InfoRow label="Điện thoại"     value={d?.receiverMobilePhone} mono />
+                                <InfoRow label="Địa chỉ"        value={receiverAddress} />
+                            </SectionCard>
+
+                            <SectionCard title="Thông tin cơ bản" accent="text-violet-600 bg-violet-50" icon={Tag}>
+                                <InfoRow label="Nguồn đơn đặt"      value={d?.orderSourceName} />
+                                <InfoRow label="Phân loại hàng hoá" value={d?.goodsTypeName} />
+                                <InfoRow label="Nội dung hàng hoá"  value={d?.goodsName} />
+                                <InfoRow label="Giá trị hàng hoá"   value={d?.insuredAmount} mono />
+                                <InfoRow label="Thời gian lấy đơn"  value={d?.pickTime} mono />
+                            </SectionCard>
+
+                            <SectionCard title="Chi tiết gửi hàng" accent="text-orange-600 bg-orange-50" icon={Truck}>
+                                <InfoRow label="Bưu cục gửi"        value={d?.pickNetworkName} />
+                                <InfoRow label="Người gửi (KH)"     value={d?.customerName} />
+                                <InfoRow label="Mã KH"              value={d?.customerCode} mono />
+                                <InfoRow label="Loại vận chuyển"    value={d?.expressTypeName} />
+                                <InfoRow label="NV lấy hàng"        value={d?.staffCode && d?.staffName ? `${d.staffCode} – ${d.staffName}` : d?.staffName} />
+                            </SectionCard>
+
+                            <SectionCard title="Thông tin thanh toán" accent="text-teal-600 bg-teal-50" icon={CreditCard}>
+                                <InfoRow label="Trọng lượng tính phí" value={d?.packageChargeWeight} mono />
+                                <InfoRow label="Kích thước (cm)"      value={d?.packageLength && `${d.packageLength}×${d.packageWide}×${d.packageHigh}`} mono />
+                                <InfoRow label="Trọng lượng quy đổi" value={d?.packageVolume} mono />
+                                <InfoRow label="Phương thức TT"       value={d?.paymentModeName} />
+                            </SectionCard>
+                        </>
+                    )}
+                </div>
+            </div>
+        </>
     );
 }
 

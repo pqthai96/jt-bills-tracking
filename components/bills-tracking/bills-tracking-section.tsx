@@ -1,10 +1,33 @@
 "use client";
 
-import {useEffect, useState} from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
 import axios from "axios";
+import {
+    Search, Package, Filter, RotateCcw, X,
+    ArrowLeft, Truck, RefreshCw, Copy, Check,
+} from "lucide-react";
+
+// ─── Font loader ──────────────────────────────────────────────────────────────
+const FontLoader = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap');
+        body, body * { font-family: 'Nunito', 'Segoe UI', Arial, sans-serif; }
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(-6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fade-in 0.25s ease-out; }
+
+        @keyframes content-fade {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        .content-fade { animation: content-fade 0.18s ease-out; }
+    `}</style>
+);
 
 interface BillsTrackingSectionProps {
     bills: string[];
@@ -12,15 +35,13 @@ interface BillsTrackingSectionProps {
     isBillTracking: boolean;
 }
 
-// Interface cho dữ liệu đơn hàng
 interface OrderData {
     waybill: string;
     terminalDispatchCode: string;
     scanTypeName: string;
-    scanNetworkCode: string; // THÊM MỚI
+    scanNetworkCode: string;
 }
 
-// Interface cho nhóm đơn hàng
 interface GroupedOrder {
     waybill: string;
     terminalDispatchCode: string;
@@ -30,70 +51,58 @@ interface GroupedOrder {
     groupColor: string;
 }
 
-export default function BillsTrackingSection({bills, authToken, isBillTracking}: BillsTrackingSectionProps) {
+// ─── Cache types ──────────────────────────────────────────────────────────────
+export interface DetailCache {
+    orderDetail: any;
+    podHistory: any[];
+    issueHistory: any[];
+}
 
-    const [selectedCode, setSelectedCode] = useState<string | null>(null);
-    const [inputCode, setInputCode] = useState<string>("");
-    const [parsedCodes, setParsedCodes] = useState<string[]>([]);
-    const [billsList, setBillsList] = useState<string[]>(bills);
+const GROUP_COLORS = [
+    'bg-blue-50 border-blue-200',
+    'bg-emerald-50 border-emerald-200',
+    'bg-amber-50 border-amber-200',
+    'bg-purple-50 border-purple-200',
+    'bg-pink-50 border-pink-200',
+    'bg-indigo-50 border-indigo-200',
+    'bg-slate-50 border-slate-200',
+    'bg-rose-50 border-rose-200',
+    'bg-orange-50 border-orange-200',
+    'bg-teal-50 border-teal-200',
+];
+
+export default function BillsTrackingSection({ bills, authToken, isBillTracking }: BillsTrackingSectionProps) {
+
+    const [selectedCode, setSelectedCode]         = useState<string | null>(null);
+    const [inputCode, setInputCode]               = useState<string>("");
+    const [parsedCodes, setParsedCodes]           = useState<string[]>([]);
+    const [billsList, setBillsList]               = useState<string[]>(bills);
     const [isSearchExpanded, setIsSearchExpanded] = useState<boolean>(true);
 
-    // State cho filter và data
-    const [ordersData, setOrdersData] = useState<OrderData[]>([]);
+    const [ordersData, setOrdersData]       = useState<OrderData[]>([]);
     const [groupedOrders, setGroupedOrders] = useState<GroupedOrder[]>([]);
     const [filteredBills, setFilteredBills] = useState<string[]>([]);
     const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
 
-    // Filter states
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
-    const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+    const [selectedStatuses, setSelectedStatuses]   = useState<string[]>([]);
+    const [show028M08, setShow028M08]               = useState<boolean>(true);
+    const [showNon028M08, setShowNon028M08]         = useState<boolean>(true);
+    const [copied, setCopied]                       = useState(false);
 
-    // THÊM MỚI: Filter cho scanNetworkCode
-    const [show028M08, setShow028M08] = useState<boolean>(true);
-    const [showNon028M08, setShowNon028M08] = useState<boolean>(true);
+    // ── Cache: lưu dữ liệu đã fetch để tránh re-fetch khi click lại ──────────
+    const detailCacheRef = useRef<Map<string, DetailCache>>(new Map());
 
-    // Màu sắc cho các nhóm
-    const groupColors = [
-        'bg-blue-50 border-blue-200',
-        'bg-emerald-50 border-emerald-200',
-        'bg-amber-50 border-amber-200',
-        'bg-purple-50 border-purple-200',
-        'bg-pink-50 border-pink-200',
-        'bg-indigo-50 border-indigo-200',
-        'bg-slate-50 border-slate-200',
-        'bg-rose-50 border-rose-200',
-        'bg-orange-50 border-orange-200',
-        'bg-teal-50 border-teal-200'
-    ];
+    // ── Transition: fade mượt khi đổi mã ─────────────────────────────────────
+    const [contentKey, setContentKey] = useState(0);
+    const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
 
-    useEffect(() => {
-        setBillsList(bills);
-        setFilteredBills(bills);
-    }, [bills]);
-
-    useEffect(() => {
-        if (!isBillTracking && bills.length > 0) {
-            loadOrdersData();
-        }
-    }, [bills, isBillTracking]);
-
-    // THÊM show028M08 và showNon028M08 vào dependencies
-    useEffect(() => {
-        if (!isBillTracking) {
-            applyStatusFilter();
-        }
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08]);
-
+    // ── Helpers ───────────────────────────────────────────────────────────────
     const parseTerminalCode = (code: string) => {
         const parts = code.split('-');
-        if (parts.length >= 3) {
-            return {
-                level1: parts[1],
-                level2: parts[2]
-            };
-        }
+        if (parts.length >= 3) return { level1: parts[1], level2: parts[2] };
         return { level1: '', level2: '' };
     };
 
@@ -101,40 +110,28 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         const grouped: GroupedOrder[] = [];
         const groupColorMap = new Map<string, string>();
         let colorIndex = 0;
-
         const level1Groups = new Map<string, OrderData[]>();
 
         orders.forEach(order => {
-            const parsed = parseTerminalCode(order.terminalDispatchCode);
-            const level1Key = parsed.level1;
-
-            if (!level1Groups.has(level1Key)) {
-                level1Groups.set(level1Key, []);
-            }
-            level1Groups.get(level1Key)!.push(order);
+            const { level1 } = parseTerminalCode(order.terminalDispatchCode);
+            if (!level1Groups.has(level1)) level1Groups.set(level1, []);
+            level1Groups.get(level1)!.push(order);
         });
 
         level1Groups.forEach((level1Orders, level1Key) => {
             const level2Groups = new Map<string, OrderData[]>();
-
             level1Orders.forEach(order => {
-                const parsed = parseTerminalCode(order.terminalDispatchCode);
-                const level2Key = `${level1Key}-${parsed.level2}`;
-
-                if (!level2Groups.has(level2Key)) {
-                    level2Groups.set(level2Key, []);
-                }
-                level2Groups.get(level2Key)!.push(order);
+                const { level2 } = parseTerminalCode(order.terminalDispatchCode);
+                const key = `${level1Key}-${level2}`;
+                if (!level2Groups.has(key)) level2Groups.set(key, []);
+                level2Groups.get(key)!.push(order);
             });
-
             level2Groups.forEach((level2Orders, level2Key) => {
                 if (!groupColorMap.has(level2Key)) {
-                    groupColorMap.set(level2Key, groupColors[colorIndex % groupColors.length]);
+                    groupColorMap.set(level2Key, GROUP_COLORS[colorIndex % GROUP_COLORS.length]);
                     colorIndex++;
                 }
-
                 const groupColor = groupColorMap.get(level2Key)!;
-
                 level2Orders.forEach(order => {
                     const parsed = parseTerminalCode(order.terminalDispatchCode);
                     grouped.push({
@@ -143,491 +140,469 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         scanTypeName: order.scanTypeName,
                         groupLevel1: parsed.level1,
                         groupLevel2: parsed.level2,
-                        groupColor: groupColor
+                        groupColor,
                     });
                 });
             });
         });
-
         return grouped;
     };
 
+    // ── Prefetch: tải trước dữ liệu khi hover ────────────────────────────────
+    const prefetchDetail = useCallback(async (waybill: string) => {
+        if (detailCacheRef.current.has(waybill)) return; // đã có cache
+        try {
+            const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                    { waybillNo: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                    { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
+                    { current: 1, size: 100, waybillId: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+            ]);
+            detailCacheRef.current.set(waybill, {
+                orderDetail: orderResp.data?.data?.details ?? {},
+                podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
+                issueHistory: issueResp.data?.data?.records ?? [],
+            });
+        } catch {
+            // prefetch thất bại → component con sẽ tự fetch lại
+        }
+    }, [authToken]);
+
+    // ── Chọn mã với fade transition ───────────────────────────────────────────
+    const handleSelectCode = useCallback((code: string) => {
+        if (code === selectedCode) return;
+        setIsTransitioning(true);
+        setTimeout(() => {
+            setSelectedCode(code);
+            setContentKey(k => k + 1);
+            setIsTransitioning(false);
+        }, 120);
+    }, [selectedCode]);
+
+    // ── Effects ───────────────────────────────────────────────────────────────
+    useEffect(() => { setBillsList(bills); setFilteredBills(bills); }, [bills]);
+
+    useEffect(() => {
+        if (!isBillTracking && bills.length > 0) loadOrdersData();
+    }, [bills, isBillTracking]);
+
+    useEffect(() => {
+        if (!isBillTracking) applyStatusFilter();
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08]);
+
+    // ── API ───────────────────────────────────────────────────────────────────
     const loadOrdersData = async () => {
         setIsLoadingOrders(true);
+        detailCacheRef.current.clear(); // xoá cache khi refresh
         try {
             const mockData: OrderData[] = [];
-            const promises = bills.map(async (bill) => {
+            await Promise.all(bills.map(async (bill) => {
                 try {
-                    const orderResp: any = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail", {
-                        "waybillNo": bill,
-                        "countryId": "1"
-                    }, {
-                        headers: {
-                            authToken: authToken,
-                            lang: 'VN',
-                            langType: 'VN',
-                        }
-                    });
-
-                    const trackingResp: any = await axios.post("https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList", {
-                        "keywordList": [bill],
-                        "trackingTypeEnum": "WAYBILL",
-                        "countryId": "1"
-                    }, {
-                        headers: {
-                            authToken: authToken,
-                            lang: 'VN',
-                            langType: 'VN',
-                        }
-                    });
-
-                    const orderData: OrderData = {
+                    const [orderResp, trackingResp]: [any, any] = await Promise.all([
+                        axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                            { waybillNo: bill, countryId: "1" },
+                            { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                        ),
+                        axios.post("https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                            { keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                            { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                        ),
+                    ]);
+                    mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
                         scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
-                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '' // THÊM MỚI
-                    };
-
-                    mockData.push(orderData);
-                } catch (error) {
-                    console.error(`Error loading data for bill ${bill}:`, error);
-                    mockData.push({
-                        waybill: bill,
-                        terminalDispatchCode: '',
-                        scanTypeName: 'Lỗi tải dữ liệu',
-                        scanNetworkCode: '' // THÊM MỚI
+                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '',
                     });
+                } catch {
+                    mockData.push({ waybill: bill, terminalDispatchCode: '', scanTypeName: 'Lỗi tải dữ liệu', scanNetworkCode: '' });
                 }
-            });
-
-            await Promise.all(promises);
-
-            const statuses = Array.from(new Set(mockData.map(order => order.scanTypeName).filter(status => status)));
+            }));
+            const statuses = Array.from(new Set(mockData.map(o => o.scanTypeName).filter(Boolean)));
             setAvailableStatuses(statuses);
             setSelectedStatuses(statuses);
-
-            const grouped = createGroupedOrders(mockData);
-            setGroupedOrders(grouped);
+            setGroupedOrders(createGroupedOrders(mockData));
             setOrdersData(mockData);
-            setIsLoadingOrders(false);
-
-        } catch (error) {
-            console.error('Error loading orders data:', error);
+        } catch (e) {
+            console.error('Error loading orders data:', e);
+        } finally {
             setIsLoadingOrders(false);
         }
     };
 
-    // CẬP NHẬT: Thêm logic filter theo scanNetworkCode
     const applyStatusFilter = () => {
         let filtered = groupedOrders;
-
-        // Filter theo trạng thái
-        if (selectedStatuses.length > 0 && selectedStatuses.length < availableStatuses.length) {
-            filtered = filtered.filter(order => selectedStatuses.includes(order.scanTypeName));
-        }
-
-        // Filter theo scanNetworkCode
+        if (selectedStatuses.length > 0 && selectedStatuses.length < availableStatuses.length)
+            filtered = filtered.filter(o => selectedStatuses.includes(o.scanTypeName));
         filtered = filtered.filter(order => {
-            const orderData = ordersData.find(o => o.waybill === order.waybill);
-            if (!orderData) return true;
-
-            const is028M08 = orderData.scanNetworkCode === '028M08';
-
-            // Nếu là 028M08 nhưng không show028M08 thì loại bỏ
-            if (is028M08 && !show028M08) return false;
-            // Nếu không phải 028M08 nhưng không showNon028M08 thì loại bỏ
-            if (!is028M08 && !showNon028M08) return false;
-
+            const od = ordersData.find(o => o.waybill === order.waybill);
+            if (!od) return true;
+            const is028 = od.scanNetworkCode === '028M08';
+            if (is028 && !show028M08) return false;
+            if (!is028 && !showNon028M08) return false;
             return true;
         });
-
-        const filteredWaybills = filtered.map(order => order.waybill);
-        setFilteredBills(filteredWaybills);
-        setBillsList(filteredWaybills);
-
-        if (selectedCode && !filteredWaybills.includes(selectedCode)) {
-            setSelectedCode(null);
-        }
+        const waybills = filtered.map(o => o.waybill);
+        setFilteredBills(waybills);
+        setBillsList(waybills);
+        if (selectedCode && !waybills.includes(selectedCode)) setSelectedCode(null);
     };
 
-    const handleStatusChange = (status: string, checked: boolean) => {
-        if (checked) {
-            setSelectedStatuses(prev => [...prev, status]);
-        } else {
-            setSelectedStatuses(prev => prev.filter(s => s !== status));
-        }
-    };
-
-    const handleSelectAllStatuses = (selectAll: boolean) => {
-        if (selectAll) {
-            setSelectedStatuses([...availableStatuses]);
-        } else {
-            setSelectedStatuses([]);
-        }
-    };
-
-    const isNumericCode = (code: string) => {
-        return /^\d{12}$/.test(code.trim());
-    };
+    // ── Input handlers ────────────────────────────────────────────────────────
+    const isNumericCode = (code: string) => /^\d{12}$/.test(code.trim());
 
     const handleInputChange = (value: string) => {
         setInputCode(value);
-
-        const codes = value.split(/[\s\n,]+/).filter(code => code.trim().length > 0);
+        const codes = value.split(/[\s\n,]+/).filter(c => c.trim().length > 0);
         const validCodes: string[] = [];
         let remainingText = "";
-
-        codes.forEach((code, index) => {
-            const trimmedCode = code.trim();
-
-            if (isNumericCode(trimmedCode)) {
-                validCodes.push(trimmedCode);
-            } else if (trimmedCode.length > 0) {
-                if (trimmedCode.length >= 12 && /^\d+$/.test(trimmedCode)) {
-                    for (let i = 0; i < trimmedCode.length; i += 12) {
-                        const chunk = trimmedCode.substr(i, 12);
-                        if (chunk.length === 12) {
-                            validCodes.push(chunk);
-                        } else if (chunk.length > 0) {
-                            remainingText += (remainingText ? " " : "") + chunk;
-                        }
-                    }
-                } else {
-                    remainingText += (remainingText ? " " : "") + trimmedCode;
+        codes.forEach(code => {
+            const t = code.trim();
+            if (isNumericCode(t)) {
+                validCodes.push(t);
+            } else if (t.length >= 12 && /^\d+$/.test(t)) {
+                for (let i = 0; i < t.length; i += 12) {
+                    const chunk = t.substr(i, 12);
+                    if (chunk.length === 12) validCodes.push(chunk);
+                    else if (chunk.length > 0) remainingText += (remainingText ? " " : "") + chunk;
                 }
+            } else {
+                remainingText += (remainingText ? " " : "") + t;
             }
         });
-
         setParsedCodes(validCodes);
-
-        if (remainingText !== value.replace(/[\s\n,]+/g, ' ').trim()) {
-            setInputCode(remainingText);
-        }
+        if (remainingText !== value.replace(/[\s\n,]+/g, ' ').trim()) setInputCode(remainingText);
     };
 
-    const removeParsedCode = (codeToRemove: string) => {
-        setParsedCodes(prev => prev.filter(code => code !== codeToRemove));
-    };
-
+    const removeParsedCode = (code: string) => setParsedCodes(prev => prev.filter(c => c !== code));
     const handleSearch = () => {
         if (parsedCodes.length > 0) {
+            detailCacheRef.current.clear();
             setBillsList([...parsedCodes]);
-            setSelectedCode(parsedCodes[0]);
+            handleSelectCode(parsedCodes[0]);
+        }
+    };
+    const handleStatusChange = (status: string, checked: boolean) =>
+        setSelectedStatuses(prev => checked ? [...prev, status] : prev.filter(s => s !== status));
+    const handleSelectAllStatuses = (all: boolean) => setSelectedStatuses(all ? [...availableStatuses] : []);
+
+    // ── Làm mới ───────────────────────────────────────────────────────────────
+    const handleRefresh = () => {
+        detailCacheRef.current.clear();
+        if (isBillTracking) {
+            if (billsList.length > 0) {
+                setSelectedCode(null);
+                setBillsList([...billsList]);
+            }
+        } else {
+            loadOrdersData();
         }
     };
 
-    const handleSearchClick = (e: React.MouseEvent) => {
-        e.stopPropagation();
-        setIsSearchExpanded(true);
+    // ── Copy ──────────────────────────────────────────────────────────────────
+    const handleCopy = () => {
+        navigator.clipboard.writeText(billsList.join("\n")).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
     };
 
-    const handleBillsListClick = (e: React.MouseEvent) => {
-        e.stopPropagation();
-        setIsSearchExpanded(false);
+    // ── Reset filters ─────────────────────────────────────────────────────────
+    const clearFilters = () => {
+        setSelectedStatuses([...availableStatuses]);
+        setShow028M08(true);
+        setShowNon028M08(true);
     };
 
-    const handleBillClick = (code: string, e: React.MouseEvent) => {
-        e.stopPropagation();
-        setSelectedCode(code);
-        setIsSearchExpanded(false);
-    };
-
-    const LoadingSpinner = () => (
-        <div className="flex h-screen bg-gray-50">
-            <div className="w-80 border-r border-gray-200 bg-white flex flex-col">
-                <div className="p-6 border-b border-gray-200 bg-red-500 flex-shrink-0">
-                    <h1 className="text-white font-semibold text-xl tracking-tight">Tra cứu vận đơn</h1>
-                </div>
-
-                <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center">
-                        <div className="relative">
-                            <div className="w-12 h-12 border-3 border-red-200 border-t-red-500 rounded-full animate-spin mx-auto mb-4"></div>
-                        </div>
-
-                        <p className="text-slate-700 font-medium mb-2">Đang tải dữ liệu...</p>
-                        <p className="text-slate-500 text-sm">Vui lòng đợi trong giây lát</p>
-
-                        <div className="flex justify-center mt-4 space-x-1">
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce"></div>
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                        </div>
+    // ── Loading screen ────────────────────────────────────────────────────────
+    if (shouldShowLoading) {
+        return (
+            <>
+                <FontLoader />
+                <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 border-[3px] border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                        <p className="font-bold text-slate-700">Đang tải dữ liệu...</p>
+                        <p className="text-xs text-slate-400">Vui lòng đợi trong giây lát</p>
                     </div>
                 </div>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                    <div className="text-slate-300 text-5xl mb-4">📦</div>
-                    <p className="text-slate-500 text-lg">Đang chuẩn bị dữ liệu vận đơn...</p>
-                </div>
-            </div>
-        </div>
-    );
-
-    // CẬP NHẬT FilterBar: Thêm filter cho scanNetworkCode
-    const FilterBar = () => (
-        <div className="bg-white border-b border-gray-200 p-4">
-            <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-slate-700">Lọc theo trạng thái:</span>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={selectedStatuses.length === availableStatuses.length}
-                            onChange={(e) => handleSelectAllStatuses(e.target.checked)}
-                            className="rounded border-gray-300 text-red-500 focus:ring-red-500 focus:ring-1"
-                        />
-                        <span className="font-medium text-slate-700">Tất cả</span>
-                    </label>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                    {availableStatuses.map(status => (
-                        <label key={status} className="flex items-center gap-2 text-sm">
-                            <input
-                                type="checkbox"
-                                checked={selectedStatuses.includes(status)}
-                                onChange={(e) => handleStatusChange(status, e.target.checked)}
-                                className="rounded border-gray-300 text-red-500 focus:ring-red-500 focus:ring-1"
-                            />
-                            <span className="text-slate-700">{status}</span>
-                        </label>
-                    ))}
-                </div>
-
-                {/* THÊM MỚI: Filter theo scanNetworkCode */}
-                <div className="h-6 w-px bg-gray-300"></div>
-
-                <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-slate-700">Mã mạng lưới:</span>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={show028M08}
-                            onChange={(e) => setShow028M08(e.target.checked)}
-                            className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 focus:ring-1"
-                        />
-                        <span className="text-slate-700 font-medium">028M08</span>
-                    </label>
-
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={showNon028M08}
-                            onChange={(e) => setShowNon028M08(e.target.checked)}
-                            className="rounded border-gray-300 text-blue-500 focus:ring-blue-500 focus:ring-1"
-                        />
-                        <span className="text-slate-700">Khác</span>
-                    </label>
-                </div>
-
-                <div className="ml-auto text-sm text-slate-600 font-medium">
-                    {isLoadingOrders ? "Đang tải..." : `${filteredBills.length}/${bills.length} đơn`}
-                </div>
-            </div>
-        </div>
-    );
-
-    if (shouldShowLoading) {
-        return <LoadingSpinner/>;
+            </>
+        );
     }
 
+    // ── Main ──────────────────────────────────────────────────────────────────
     return (
-        <div className="flex h-screen bg-gray-50">
-            {!isBillTracking && (
-                <div className="absolute top-0 left-0 right-0 z-10">
-                    <FilterBar/>
-                </div>
-            )}
+        <>
+            <FontLoader />
+            <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
 
-            <div className={`flex flex-1 w-full ${!isBillTracking ? 'pt-16' : ''}`}>
-                <div className={`border-r border-gray-200 bg-white flex flex-col transition-all duration-300 ease-in-out ${
-                    isSearchExpanded ? 'w-80' : 'w-56'
-                }`}>
-                    <div className="p-6 border-b border-gray-200 bg-red-500 flex-shrink-0">
-                        <h1 className="text-white font-semibold text-xl tracking-tight">
-                            {isBillTracking ? "Tra cứu vận đơn" : "MÃ VẬN ĐƠN"}
-                        </h1>
-                    </div>
-
-                    {isBillTracking && (
-                        <div
-                            className={`border-b border-gray-200 transition-all duration-300 ease-in-out cursor-pointer ${
-                                isSearchExpanded ? 'p-4' : 'p-3'
-                            }`}
-                            onClick={handleSearchClick}
-                        >
-                            <label className={`font-medium text-slate-700 ${
-                                isSearchExpanded ? 'text-sm' : 'text-xs'
-                            }`}>
-                                Theo vận đơn
-                            </label>
-                            <textarea
-                                value={inputCode}
-                                onChange={(e) => handleInputChange(e.target.value)}
-                                placeholder="Nhập mã vận đơn..."
-                                className={`border border-gray-300 rounded-lg mt-2 w-full resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all duration-300 ${
-                                    isSearchExpanded
-                                        ? 'p-3 h-20 text-sm'
-                                        : 'p-2 h-12 text-xs'
-                                }`}
-                                rows={isSearchExpanded ? 4 : 2}
-                                onClick={(e) => e.stopPropagation()}
-                            />
-
-                            {isSearchExpanded && parsedCodes.length > 0 && (
-                                <div className="mt-3 max-h-32 overflow-y-auto space-y-2 pr-1">
-                                    {parsedCodes.map((code, index) => (
-                                        <div key={index}
-                                             className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex-shrink-0">
-                                            <span className="text-sm font-mono text-blue-800">{code}</span>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    removeParsedCode(code);
-                                                }}
-                                                className="text-red-500 hover:text-red-600 ml-2 font-medium text-sm flex-shrink-0"
-                                            >
-                                                ×
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {!isSearchExpanded && parsedCodes.length > 0 && (
-                                <div className="mt-2 text-xs text-blue-600 font-medium">
-                                    {parsedCodes.length} mã đã nhập
-                                </div>
-                            )}
-
+                {/* ── Top bar ── */}
+                <div className="bg-white border-b border-slate-200 flex-shrink-0 z-20">
+                    <div className="px-5 h-14 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
                             <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSearch();
-                                }}
-                                disabled={parsedCodes.length === 0}
-                                className={`rounded-lg mt-3 w-full transition-all duration-200 font-medium ${
-                                    isSearchExpanded ? 'px-4 py-3' : 'px-3 py-2 text-sm'
-                                } ${
-                                    parsedCodes.length > 0
-                                        ? "bg-red-500 text-white hover:bg-red-600"
-                                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                                }`}
+                                onClick={() => window.history.back()}
+                                className="flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors text-sm font-semibold"
                             >
-                                Tra cứu ({parsedCodes.length})
+                                <ArrowLeft className="w-4 h-4" />
+                                Quay lại
+                            </button>
+                            <div className="w-px h-5 bg-slate-200" />
+                            <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 bg-blue-100 rounded-lg flex items-center justify-center">
+                                    <Truck className="w-3.5 h-3.5 text-blue-600" />
+                                </div>
+                                <span className="font-bold text-slate-800 text-sm">
+                                    {isBillTracking ? "Tra cứu vận đơn" : "Theo dõi vận đơn"}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
+                                {isBillTracking ? billsList.length : `${filteredBills.length} / ${bills.length}`} đơn
+                            </span>
+                            {isLoadingOrders && (
+                                <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                            )}
+                            <button
+                                onClick={handleRefresh}
+                                disabled={isLoadingOrders}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-semibold text-xs transition-all disabled:opacity-40"
+                            >
+                                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrders ? "animate-spin" : ""}`} />
+                                Làm mới
                             </button>
                         </div>
-                    )}
-
-                    <div
-                        className="flex-1 overflow-hidden flex flex-col cursor-pointer"
-                        onClick={handleBillsListClick}
-                    >
-                        <div className={`pt-4 flex-shrink-0 transition-all duration-300 ${
-                            isSearchExpanded ? 'px-3' : 'px-4'
-                        }`}>
-                            <h2 className={`font-medium mb-3 text-slate-700 ${
-                                isSearchExpanded ? 'text-sm' : 'text-base'
-                            }`}>
-                                Danh sách đơn ({billsList.length})
-                                {!isBillTracking && isLoadingOrders && (
-                                    <span className="ml-2 text-blue-500">
-                                        <div className="inline-block w-3 h-3 border border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                    </span>
-                                )}
-                            </h2>
-                        </div>
-
-                        <div className={`flex-1 pb-4 overflow-y-auto transition-all duration-300 ${
-                            isSearchExpanded ? 'px-3' : 'px-4'
-                        }`}>
-                            {billsList.length === 0 ? (
-                                <div className="text-center py-8">
-                                    <div className={`text-slate-300 mb-3 ${
-                                        isSearchExpanded ? 'text-3xl' : 'text-4xl'
-                                    }`}>📦</div>
-                                    <p className={`text-slate-500 ${
-                                        isSearchExpanded ? 'text-xs' : 'text-sm'
-                                    }`}>
-                                        {!isBillTracking && isLoadingOrders
-                                            ? "Đang tải dữ liệu..."
-                                            : "Tạm thời chưa có dữ liệu"}
-                                    </p>
-                                </div>
-                            ) : (
-                                billsList.map((code) => {
-                                    const groupedOrder = groupedOrders.find(order => order.waybill === code);
-                                    const isSelected = selectedCode === code;
-
-                                    return (
-                                        <div
-                                            key={code}
-                                            onClick={(e) => handleBillClick(code, e)}
-                                            className={`rounded-lg cursor-pointer transition-all duration-200 mb-3 relative ${
-                                                isSearchExpanded
-                                                    ? 'p-3 text-xs'
-                                                    : 'p-4 text-sm'
-                                            } ${
-                                                isSelected
-                                                    ? "bg-red-50 border-2 border-red-500 outline outline-2 outline-red-500 outline-offset-2 shadow-lg"
-                                                    : `border hover:shadow-sm ${groupedOrder?.groupColor || 'bg-gray-50 border-gray-200 hover:bg-gray-100'}`
-                                            }`}
-                                        >
-                                            <div className="text-center font-mono font-semibold">{code}</div>
-                                            {!isBillTracking && groupedOrder && !isSearchExpanded && (
-                                                <div className="mt-2 text-xs text-slate-600 text-center">
-                                                    {groupedOrder.groupLevel1 && (
-                                                        <div className="text-xs text-blue-600 font-medium mt-1 font-mono">
-                                                            {groupedOrder.terminalDispatchCode}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
                     </div>
                 </div>
 
-                <div className="flex-1 flex">
-                    {!selectedCode ? (
-                        <div className="flex-1 flex items-center justify-center">
-                            <div className="text-center">
-                                <div className="text-slate-300 text-5xl mb-4">🔍</div>
-                                <p className="text-slate-500 text-lg">Chọn một mã vận đơn để xem chi tiết</p>
-                                {billsList.length > 0 && (
-                                    <p className="text-slate-400 text-sm mt-2">
-                                        Có {billsList.length} vận đơn trong danh sách
-                                    </p>
+                {/* ── Filter bar ── */}
+                {!isBillTracking && (
+                    <div className="bg-white border-b border-slate-200 px-5 py-3 flex-shrink-0">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Bộ lọc</span>
+                            </div>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedStatuses.length === availableStatuses.length}
+                                    onChange={e => handleSelectAllStatuses(e.target.checked)}
+                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="font-semibold text-slate-700">Tất cả</span>
+                            </label>
+                            {availableStatuses.map(status => (
+                                <label key={status} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedStatuses.includes(status)}
+                                        onChange={e => handleStatusChange(status, e.target.checked)}
+                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="text-slate-700">{status}</span>
+                                </label>
+                            ))}
+                            <div className="h-5 w-px bg-slate-200" />
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                <input type="checkbox" checked={show028M08} onChange={e => setShow028M08(e.target.checked)}
+                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                <span className="font-semibold text-slate-700">028M08</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                <input type="checkbox" checked={showNon028M08} onChange={e => setShowNon028M08(e.target.checked)}
+                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                <span className="text-slate-700">Khác</span>
+                            </label>
+                            <button onClick={clearFilters}
+                                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
+                                <RotateCcw className="w-3 h-3" />Reset
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Body ── */}
+                <div className="flex flex-1 overflow-hidden">
+
+                    {/* ── Sidebar ── */}
+                    <div className={`flex flex-col bg-white border-r border-slate-200 transition-all duration-300 ease-in-out flex-shrink-0 ${isSearchExpanded ? 'w-80' : 'w-56'}`}>
+
+                        {isBillTracking && (
+                            <div
+                                className="px-4 py-4 border-b border-slate-100 flex-shrink-0 cursor-pointer"
+                                onClick={() => setIsSearchExpanded(true)}
+                            >
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                                    Nhập mã vận đơn
+                                </label>
+                                <textarea
+                                    value={inputCode}
+                                    onChange={e => handleInputChange(e.target.value)}
+                                    placeholder="Nhập hoặc dán mã vận đơn..."
+                                    className={`w-full border border-slate-200 rounded-xl bg-slate-50 text-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-400 transition-all ${isSearchExpanded ? 'px-3 py-2.5 h-20 text-sm' : 'px-3 py-2 h-12 text-xs'}`}
+                                    onClick={e => e.stopPropagation()}
+                                />
+                                {isSearchExpanded && parsedCodes.length > 0 && (
+                                    <div className="mt-2 max-h-32 overflow-y-auto space-y-1.5">
+                                        {parsedCodes.map((code, i) => (
+                                            <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
+                                                <span className="text-xs font-mono font-semibold text-blue-800">{code}</span>
+                                                <button onClick={e => { e.stopPropagation(); removeParsedCode(code); }}
+                                                        className="text-slate-400 hover:text-red-500 transition-colors">
+                                                    <X className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {!isSearchExpanded && parsedCodes.length > 0 && (
+                                    <p className="mt-1.5 text-xs text-blue-600 font-semibold">{parsedCodes.length} mã đã nhập</p>
+                                )}
+                                <button
+                                    onClick={e => { e.stopPropagation(); handleSearch(); }}
+                                    disabled={parsedCodes.length === 0}
+                                    className="w-full mt-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm"
+                                >
+                                    <Search className="w-4 h-4" />
+                                    Tra cứu ({parsedCodes.length})
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Bills list */}
+                        <div className="flex-1 overflow-hidden flex flex-col cursor-pointer" onClick={() => setIsSearchExpanded(false)}>
+                            <div className="px-4 pt-4 pb-2 flex-shrink-0 flex items-center justify-between gap-2">
+                                <span className="text-xs font-bold text-slate-500 uppercase tracking-wide flex gap-2 items-center">
+                                    Danh sách {isLoadingOrders && (
+                                    <div className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin ml-auto" />
+                                )}
+                                </span>
+                                <button
+                                    onClick={e => { e.stopPropagation(); handleCopy(); }}
+                                    disabled={billsList.length === 0}
+                                    title="Copy tất cả mã vận đơn"
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                                        copied
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300"
+                                    }`}
+                                >
+                                    {copied
+                                        ? <><Check className="w-3 h-3" />Copied!</>
+                                        : <><Copy className="w-3 h-3" />({billsList.length})</>
+                                    }
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-1.5">
+                                {billsList.length === 0 ? (
+                                    <div className="text-center py-10">
+                                        <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                                        <p className="text-sm font-semibold text-slate-400">
+                                            {!isBillTracking && isLoadingOrders ? "Đang tải dữ liệu..." : "Chưa có vận đơn"}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    billsList.map(code => {
+                                        const groupedOrder = groupedOrders.find(o => o.waybill === code);
+                                        const isSelected = selectedCode === code;
+                                        return (
+                                            <div
+                                                key={code}
+                                                onClick={e => { e.stopPropagation(); handleSelectCode(code); setIsSearchExpanded(false); }}
+                                                onMouseEnter={() => prefetchDetail(code)}
+                                                className={`rounded-xl border cursor-pointer transition-all duration-200 py-2.5 relative overflow-hidden ${
+                                                    isSelected
+                                                        ? 'bg-violet-50 border-violet-200 shadow-sm pl-4 pr-3'
+                                                        : `${groupedOrder?.groupColor || 'bg-slate-50 border-slate-200'} hover:shadow-sm px-3`
+                                                }`}
+                                            >
+                                                {isSelected && (
+                                                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500" />
+                                                )}
+                                                <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
+                                                    {code}
+                                                </div>
+                                                {!isBillTracking && groupedOrder?.terminalDispatchCode && !isSearchExpanded && (
+                                                    <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
+                                                        {groupedOrder.terminalDispatchCode}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>
-                    ) : (
-                        <>
-                            <div className="max-w-1/4">
-                                <OrderDetail key={selectedCode} waybill={selectedCode} authToken={authToken}/>
-                            </div>
+                    </div>
 
-                            <div className="w-full p-4 flex flex-col gap-3">
-                                <div className="h-2/3">
-                                    <PodHistory key={`pod-${selectedCode}`} waybill={selectedCode} authToken={authToken}/>
-                                </div>
-
-                                <div className="h-1/3">
-                                    <IssueHistory key={`issue-${selectedCode}`} waybill={selectedCode} authToken={authToken}/>
+                    {/* ── Main content ── */}
+                    <div className="flex-1 flex overflow-hidden">
+                        {!selectedCode ? (
+                            <div className="flex-1 flex items-center justify-center bg-slate-50">
+                                <div className="text-center">
+                                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                        <Package className="w-8 h-8 text-slate-300" />
+                                    </div>
+                                    <p className="font-bold text-slate-500">Chọn một mã vận đơn để xem chi tiết</p>
+                                    {billsList.length > 0 && (
+                                        <p className="text-xs text-slate-400 mt-1">Có {billsList.length} vận đơn trong danh sách</p>
+                                    )}
                                 </div>
                             </div>
-                        </>
-                    )}
+                        ) : (
+                            // key=contentKey để trigger animation, KHÔNG dùng key=selectedCode
+                            <div
+                                key={contentKey}
+                                className={`flex flex-1 overflow-hidden transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100 content-fade'}`}
+                            >
+                                <div className="max-w-[340px] overflow-y-auto border-r border-slate-200">
+                                    {/* Không dùng key= ở đây — component tự quản lý bằng useEffect([waybill]) */}
+                                    <OrderDetail
+                                        waybill={selectedCode}
+                                        authToken={authToken}
+                                        cache={detailCacheRef.current.get(selectedCode)}
+                                    />
+                                </div>
+                                <div className="flex-1 p-4 flex flex-col gap-3 overflow-hidden">
+                                    <div className="flex-[2] min-h-0">
+                                        <PodHistory
+                                            waybill={selectedCode}
+                                            authToken={authToken}
+                                            cache={detailCacheRef.current.get(selectedCode)}
+                                        />
+                                    </div>
+                                    <div className="flex-1 min-h-0">
+                                        <IssueHistory
+                                            waybill={selectedCode}
+                                            authToken={authToken}
+                                            cache={detailCacheRef.current.get(selectedCode)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
+
+                <p className="text-center text-xs text-slate-300 py-2 border-t border-slate-100 bg-white flex-shrink-0">
+                    JT Express Internal Tool · {new Date().getFullYear()}
+                </p>
             </div>
-        </div>
+        </>
     );
 }
