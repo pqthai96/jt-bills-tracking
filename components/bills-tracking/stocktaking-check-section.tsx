@@ -6,8 +6,9 @@ import {
     Search, Package, Filter, RotateCcw, ArrowLeft,
     Warehouse, CheckCircle2, XCircle, Clock,
     RefreshCw, AlertTriangle, Circle, BadgeCheck, Copy, Check,
-    CalendarDays, ChevronLeft, ChevronRight,
+    CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, SortAsc,
 } from "lucide-react";
+import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
 import { DetailCache } from "@/components/bills-tracking/bills-tracking-section";
@@ -15,9 +16,9 @@ import { DetailCache } from "@/components/bills-tracking/bills-tracking-section"
 // ─── Font loader ───────────────────────────────────────────────────────────────
 const FontLoader = () => (
     <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
-        * { font-family: 'DM Sans', 'Segoe UI', sans-serif; }
-        .mono { font-family: 'JetBrains Mono', monospace; }
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap');
+        body, body * { font-family: 'Nunito', 'Segoe UI', Arial, sans-serif; }
+        .mono { font-family: 'JetBrains Mono', 'Fira Mono', monospace; }
         @keyframes slide-in {
             from { opacity: 0; transform: translateX(-8px); }
             to   { opacity: 1; transform: translateX(0); }
@@ -27,7 +28,7 @@ const FontLoader = () => (
             from { opacity: 0; }
             to   { opacity: 1; }
         }
-        .content-fade { animation: content-fade 0.15s ease-out; }
+        .content-fade { animation: content-fade 0.18s ease-out; }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 99px; }
@@ -43,9 +44,14 @@ interface StocktakingCheckSectionProps {
 }
 
 type StocktakingStatus = "checked" | "not_checked" | "loading" | "error";
+type SortMode = "default" | "dispatch_asc" | "dispatch_desc";
 
 interface BillInfo {
     waybill: string;
+    terminalDispatchCode: string;
+    groupLevel1: string;
+    groupLevel2: string;
+    groupColor: string;
     stocktakingStatus: StocktakingStatus;
     latestScanTypeName: string;
     latestScanTime: string;
@@ -54,9 +60,30 @@ interface BillInfo {
     stocktakingNetworkCode: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────────
 const STOCKTAKING_KEYWORDS = ["kiểm tồn", "stocktaking", "kiểm kho", "tồn kho", "inventory"];
 
+const GROUP_COLORS = [
+    'bg-blue-50 border-blue-200',
+    'bg-emerald-50 border-emerald-200',
+    'bg-amber-50 border-amber-200',
+    'bg-purple-50 border-purple-200',
+    'bg-pink-50 border-pink-200',
+    'bg-indigo-50 border-indigo-200',
+    'bg-slate-50 border-slate-200',
+    'bg-rose-50 border-rose-200',
+    'bg-orange-50 border-orange-200',
+    'bg-teal-50 border-teal-200',
+];
+
+const STATUS_BADGE: Record<StocktakingStatus, { label: string; icon: React.ReactNode; cls: string }> = {
+    checked:     { label: "Đã kiểm tồn",   icon: <BadgeCheck    className="w-3.5 h-3.5" />, cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    not_checked: { label: "Chưa kiểm tồn", icon: <XCircle       className="w-3.5 h-3.5" />, cls: "bg-amber-50 text-amber-700 border-amber-200"  },
+    loading:     { label: "Đang tải...",    icon: <Clock         className="w-3.5 h-3.5" />, cls: "bg-slate-50 text-slate-500 border-slate-200"  },
+    error:       { label: "Lỗi",            icon: <AlertTriangle className="w-3.5 h-3.5" />, cls: "bg-red-50 text-red-600 border-red-200"    },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function isStocktakingEvent(scanTypeName: string): boolean {
     const lower = (scanTypeName || "").toLowerCase();
     return STOCKTAKING_KEYWORDS.some(kw => lower.includes(kw));
@@ -75,68 +102,64 @@ function toDateStr(d: Date): string {
     return `${y}-${m}-${dd}`;
 }
 
-const STATUS_BADGE: Record<StocktakingStatus, { label: string; icon: React.ReactNode; cls: string }> = {
-    checked:     { label: "Đã kiểm tồn",   icon: <BadgeCheck    className="w-3.5 h-3.5" />, cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-    not_checked: { label: "Chưa kiểm tồn", icon: <XCircle       className="w-3.5 h-3.5" />, cls: "bg-amber-50  text-amber-700  border-amber-200"  },
-    loading:     { label: "Đang tải...",    icon: <Clock         className="w-3.5 h-3.5" />, cls: "bg-slate-50  text-slate-500  border-slate-200"  },
-    error:       { label: "Lỗi",            icon: <AlertTriangle className="w-3.5 h-3.5" />, cls: "bg-red-50   text-red-600    border-red-200"    },
-};
+function parseTerminalCode(code: string) {
+    const parts = code.split('-');
+    if (parts.length >= 3) return { level1: parts[1], level2: parts[2] };
+    return { level1: '', level2: '' };
+}
 
-// ─── Skeleton cho detail panel bên trái ───────────────────────────────────────
-function DetailPanelSkeleton() {
+function assignGroupColors(bills: { waybill: string; terminalDispatchCode: string }[]): Map<string, string> {
+    const colorMap = new Map<string, string>();
+    let colorIndex = 0;
+    bills.forEach(({ terminalDispatchCode }) => {
+        const { level1, level2 } = parseTerminalCode(terminalDispatchCode);
+        const key = `${level1}-${level2}`;
+        if (!colorMap.has(key)) {
+            colorMap.set(key, GROUP_COLORS[colorIndex % GROUP_COLORS.length]);
+            colorIndex++;
+        }
+    });
+    return colorMap;
+}
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+function InfoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
     return (
-        <div className="w-60 flex-shrink-0 border-r border-slate-200 bg-white overflow-y-auto px-4 py-4 space-y-3">
-            {/* Waybill card skeleton */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2 animate-pulse">
-                <div className="h-2.5 bg-slate-200 rounded w-20" />
-                <div className="h-5 bg-slate-300 rounded w-36" />
-                <div className="h-6 bg-slate-200 rounded-lg w-28 mt-2" />
-            </div>
-            {/* Info block skeleton */}
-            {[1, 2].map(i => (
-                <div key={i} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2 animate-pulse">
-                    <div className="h-3 bg-slate-200 rounded w-24" />
-                    <div className="bg-slate-50 rounded-lg px-3 py-2 space-y-1.5">
-                        <div className="h-2 bg-slate-200 rounded w-16" />
-                        <div className="h-3 bg-slate-300 rounded w-28" />
-                    </div>
-                    <div className="bg-slate-50 rounded-lg px-3 py-2 space-y-1.5">
-                        <div className="h-2 bg-slate-200 rounded w-16" />
-                        <div className="h-3 bg-slate-200 rounded w-20" />
-                    </div>
-                </div>
-            ))}
+        <div className="bg-slate-50 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
+            <p className={`text-xs font-semibold text-slate-700 truncate ${mono ? "mono" : ""}`}>{value}</p>
         </div>
     );
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Main Component ────────────────────────────────────────────────────────────
 export default function StocktakingCheckSection({ bills, authToken, selectedDate, onDateChange }: StocktakingCheckSectionProps) {
     const [billsInfo, setBillsInfo]             = useState<BillInfo[]>([]);
     const [isLoading, setIsLoading]             = useState(false);
     const [selectedWaybill, setSelectedWaybill] = useState<string | null>(null);
     const [copied, setCopied]                   = useState(false);
+    const [sortMode, setSortMode]               = useState<SortMode>("default");
 
     // Filters
     const [filterStocktaking, setFilterStocktaking]       = useState<"all" | "checked" | "not_checked">("all");
     const [selectedLastStatuses, setSelectedLastStatuses] = useState<string[]>([]);
     const [searchQuery, setSearchQuery]                   = useState("");
 
-    // ── Cache & transition ─────────────────────────────────────────────
-    const detailCacheRef   = useRef<Map<string, DetailCache>>(new Map());
+    // ── Cache & transition ─────────────────────────────────────────────────────
+    const detailCacheRef                        = useRef<Map<string, DetailCache>>(new Map());
     const [contentKey, setContentKey]           = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const today = toDateStr(new Date());
 
-    // ── Date navigation ────────────────────────────────────────────────
+    // ── Date navigation ────────────────────────────────────────────────────────
     const shiftDay = (delta: number) => {
         const d = new Date(selectedDate);
         d.setDate(d.getDate() + delta);
         onDateChange(toDateStr(d));
     };
 
-    // ── Computed ───────────────────────────────────────────────────────
+    // ── Computed ───────────────────────────────────────────────────────────────
     const allLastStatuses = useMemo(
         () => Array.from(new Set(
             billsInfo
@@ -148,7 +171,7 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     );
 
     const filtered = useMemo(() => {
-        return billsInfo.filter(b => {
+        const result = billsInfo.filter(b => {
             if (searchQuery && !b.waybill.includes(searchQuery.trim())) return false;
             if (filterStocktaking === "checked"     && b.stocktakingStatus !== "checked")     return false;
             if (filterStocktaking === "not_checked" && b.stocktakingStatus !== "not_checked") return false;
@@ -160,12 +183,56 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             ) return false;
             return true;
         });
-    }, [billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses]);
+
+        if (sortMode === "default") return result;
+
+        // Parse parts từ terminalDispatchCode: "805-A028M08-005" → p1=805, p2=A028M08, p3=005
+        // Sort theo p3 (phần thứ 3), nhưng các nhóm p2 khác nhau thì tách riêng
+        // → Nhóm p2 xuất hiện nhiều nhất = nhóm chính, xếp giữa
+        // → Các nhóm p2 khác: dispatch_asc → cuối danh sách; dispatch_desc → đầu danh sách
+        const getParts = (code: string) => {
+            const parts = (code || "").split('-');
+            return { p1: parts[0] || "", p2: parts[1] || "", p3: parts[2] || "" };
+        };
+
+        // Tìm nhóm p2 chính (xuất hiện nhiều nhất)
+        const p2Count = new Map<string, number>();
+        result.forEach(b => {
+            const { p2 } = getParts(b.terminalDispatchCode);
+            if (p2) p2Count.set(p2, (p2Count.get(p2) || 0) + 1);
+        });
+        let mainP2 = "";
+        let maxCount = 0;
+        p2Count.forEach((count, p2) => { if (count > maxCount) { maxCount = count; mainP2 = p2; } });
+
+        return [...result].sort((a, b) => {
+            const pa = getParts(a.terminalDispatchCode);
+            const pb = getParts(b.terminalDispatchCode);
+            const aIsMain = pa.p2 === mainP2;
+            const bIsMain = pb.p2 === mainP2;
+
+            if (sortMode === "dispatch_asc") {
+                // Nhóm chính trước, nhóm khác sau
+                if (aIsMain && !bIsMain) return -1;
+                if (!aIsMain && bIsMain) return 1;
+                // Cùng nhóm p2 → sort theo p3
+                if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
+                // Cả 2 đều nhóm phụ → sort theo p2 rồi p3
+                return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
+            } else {
+                // dispatch_desc: nhóm chính sau, nhóm phụ trước
+                if (aIsMain && !bIsMain) return 1;
+                if (!aIsMain && bIsMain) return -1;
+                if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
+                return pb.p2.localeCompare(pa.p2) || pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
+            }
+        });
+    }, [billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses, sortMode]);
 
     const checkedCount    = billsInfo.filter(b => b.stocktakingStatus === "checked").length;
     const notCheckedCount = billsInfo.filter(b => b.stocktakingStatus === "not_checked").length;
 
-    // ── Effects ────────────────────────────────────────────────────────
+    // ── Effects ────────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!authToken || !bills.length) return;
         loadData();
@@ -176,13 +243,14 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             setSelectedLastStatuses([...allLastStatuses]);
     }, [allLastStatuses]);
 
-    // ── Load data ──────────────────────────────────────────────────────
+    // ── Load all data ──────────────────────────────────────────────────────────
     const loadData = async () => {
         setIsLoading(true);
         setSelectedWaybill(null);
         detailCacheRef.current.clear();
         setBillsInfo(bills.map(w => ({
-            waybill: w, stocktakingStatus: "loading",
+            waybill: w, terminalDispatchCode: '', groupLevel1: '', groupLevel2: '', groupColor: '',
+            stocktakingStatus: "loading",
             latestScanTypeName: "", latestScanTime: "",
             latestScanNetworkCode: "", stocktakingTime: "", stocktakingNetworkCode: "",
         })));
@@ -190,32 +258,41 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         const dateStart = `${selectedDate} 00:00:00`;
         const dateEnd   = `${selectedDate} 23:59:59`;
 
-        const results: BillInfo[] = await Promise.all(
-            bills.map(async (waybill): Promise<BillInfo> => {
+        // Fetch tất cả đơn song song
+        const rawResults = await Promise.all(
+            bills.map(async (waybill) => {
                 try {
-                    const resp: any = await axios.post(
-                        "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
-                        { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
-                        { headers: { authToken, lang: "VN", langType: "VN" } }
-                    );
-                    const details: any[] = resp.data?.data?.[0]?.details || [];
-                    const todayStocktaking = details.find(d =>
+                    const [orderResp, trackingResp]: [any, any] = await Promise.all([
+                        axios.post(
+                            "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                            { waybillNo: waybill, countryId: "1" },
+                            { headers: { authToken, lang: "VN", langType: "VN" } }
+                        ),
+                        axios.post(
+                            "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                            { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                            { headers: { authToken, lang: "VN", langType: "VN" } }
+                        ),
+                    ]);
+
+                    const terminalDispatchCode = orderResp.data?.data?.details?.terminalDispatchCode || '';
+                    const details: any[]       = trackingResp.data?.data?.[0]?.details || [];
+                    const todayStocktaking     = details.find(d =>
                         d.scanTime >= dateStart && d.scanTime <= dateEnd && isStocktakingEvent(d.scanTypeName)
                     );
                     const latest = details[0];
 
-                    // Cache luôn POD history khi load (đã có data, tái sử dụng)
-                    if (!detailCacheRef.current.has(waybill)) {
-                        detailCacheRef.current.set(waybill, {
-                            orderDetail: null,   // không cần ở đây
-                            podHistory: [...details].reverse(),
-                            issueHistory: [],    // sẽ lazy-load khi cần
-                        });
-                    }
+                    // Pre-cache POD history (đã có data từ tracking resp)
+                    detailCacheRef.current.set(waybill, {
+                        orderDetail: orderResp.data?.data?.details ?? null,
+                        podHistory: [...details].reverse(),
+                        issueHistory: [],
+                    });
 
                     return {
                         waybill,
-                        stocktakingStatus:      todayStocktaking ? "checked" : "not_checked",
+                        terminalDispatchCode,
+                        stocktakingStatus: (todayStocktaking ? "checked" : "not_checked") as StocktakingStatus,
                         latestScanTypeName:     latest?.scanTypeName    || "Không có trạng thái",
                         latestScanTime:         latest?.scanTime        || "",
                         latestScanNetworkCode:  latest?.scanNetworkCode || "",
@@ -224,7 +301,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     };
                 } catch {
                     return {
-                        waybill, stocktakingStatus: "error",
+                        waybill, terminalDispatchCode: '',
+                        stocktakingStatus: "error" as StocktakingStatus,
                         latestScanTypeName: "Lỗi tải dữ liệu",
                         latestScanTime: "", latestScanNetworkCode: "",
                         stocktakingTime: "", stocktakingNetworkCode: "",
@@ -233,14 +311,70 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             })
         );
 
+        // Assign group colors sau khi có đủ terminalDispatchCode
+        const colorMap = assignGroupColors(rawResults);
+        const results: BillInfo[] = rawResults.map(r => {
+            const { level1, level2 } = parseTerminalCode(r.terminalDispatchCode);
+            const colorKey = `${level1}-${level2}`;
+            return {
+                ...r,
+                groupLevel1: level1,
+                groupLevel2: level2,
+                groupColor: colorMap.get(colorKey) || 'bg-slate-50 border-slate-200',
+            };
+        });
+
         setBillsInfo(results);
         setIsLoading(false);
     };
 
-    // ── Prefetch issue history khi hover ───────────────────────────────
+    // ── Fetch chi tiết đơn khi click (luôn refresh) ───────────────────────────
+    const fetchDetailForWaybill = useCallback(async (waybill: string) => {
+        // Xoá cache cũ để force re-fetch mới nhất
+        detailCacheRef.current.delete(waybill);
+        try {
+            const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                    { waybillNo: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                    { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
+                    { current: 1, size: 100, waybillId: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+            ]);
+            detailCacheRef.current.set(waybill, {
+                orderDetail: orderResp.data?.data?.details ?? {},
+                podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
+                issueHistory: issueResp.data?.data?.records ?? [],
+            });
+        } catch {
+            // Nếu fetch thất bại, component con sẽ tự fetch
+        }
+    }, [authToken]);
+
+    // ── Chọn mã với fade transition + fresh fetch ─────────────────────────────
+    const handleSelectWaybill = useCallback(async (waybill: string) => {
+        if (waybill === selectedWaybill) return;
+        setIsTransitioning(true);
+        // Fetch dữ liệu mới trong lúc transition
+        await fetchDetailForWaybill(waybill);
+        setSelectedWaybill(waybill);
+        setContentKey(k => k + 1);
+        setIsTransitioning(false);
+    }, [selectedWaybill, fetchDetailForWaybill]);
+
+    // ── Prefetch issue history khi hover (chỉ nếu chưa có) ───────────────────
     const prefetchIssue = useCallback(async (waybill: string) => {
         const existing = detailCacheRef.current.get(waybill);
-        if (existing?.issueHistory?.length !== 0 && existing?.issueHistory !== undefined) return; // đã có hoặc đã fetch rỗng
+        if (existing?.issueHistory && existing.issueHistory.length !== 0) return;
         try {
             const resp: any = await axios.post(
                 "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
@@ -248,28 +382,12 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 { headers: { authToken, lang: "VN", langType: "VN" } }
             );
             const records = resp.data?.data?.records ?? [];
-            detailCacheRef.current.set(waybill, {
-                ...(detailCacheRef.current.get(waybill) ?? { orderDetail: null, podHistory: [] }),
-                issueHistory: records,
-            });
-        } catch { /* prefetch thất bại — component con sẽ tự fetch */ }
+            const prev = detailCacheRef.current.get(waybill) ?? { orderDetail: null, podHistory: [] };
+            detailCacheRef.current.set(waybill, { ...prev, issueHistory: records });
+        } catch { }
     }, [authToken]);
 
-    // ── Chọn mã với fade transition ────────────────────────────────────
-    const handleSelectWaybill = useCallback((waybill: string) => {
-        if (waybill === selectedWaybill) {
-            setSelectedWaybill(null);
-            return;
-        }
-        setIsTransitioning(true);
-        setTimeout(() => {
-            setSelectedWaybill(waybill);
-            setContentKey(k => k + 1);
-            setIsTransitioning(false);
-        }, 100);
-    }, [selectedWaybill]);
-
-    // ── Copy ───────────────────────────────────────────────────────────
+    // ── Copy ───────────────────────────────────────────────────────────────────
     const handleCopyFiltered = () => {
         const text = filtered.map(b => b.waybill).join("\n");
         navigator.clipboard.writeText(text).then(() => {
@@ -278,16 +396,27 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         });
     };
 
+    // ── Sort toggle ────────────────────────────────────────────────────────────
+    const cycleSortMode = () => {
+        setSortMode(prev =>
+            prev === "default" ? "dispatch_asc" :
+                prev === "dispatch_asc" ? "dispatch_desc" : "default"
+        );
+    };
+
+    const sortLabel = sortMode === "dispatch_asc" ? "Mã đoạn ↑" :
+        sortMode === "dispatch_desc" ? "Mã đoạn ↓" : "Mặc định";
+
     const selectedInfo = billsInfo.find(b => b.waybill === selectedWaybill);
 
-    // ── Render ─────────────────────────────────────────────────────────
+    // ── Render ─────────────────────────────────────────────────────────────────
     return (
         <>
             <FontLoader />
-            <div className="h-screen bg-[#f5f6fa] flex flex-col overflow-hidden text-[13px]">
+            <div className="h-screen bg-slate-50 flex flex-col overflow-hidden text-[13px]">
 
                 {/* ── Top bar ── */}
-                <header className="bg-white border-b border-slate-200 flex-shrink-0 px-5 h-14 flex items-center justify-between gap-4 shadow-sm">
+                <header className="bg-white border-b border-slate-200 flex-shrink-0 px-5 h-14 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <button
                             onClick={() => window.history.back()}
@@ -422,8 +551,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     )}
 
                     <button
-                        onClick={() => { setFilterStocktaking("all"); setSelectedLastStatuses([...allLastStatuses]); setSearchQuery(""); }}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all"
+                        onClick={() => { setFilterStocktaking("all"); setSelectedLastStatuses([...allLastStatuses]); setSearchQuery(""); setSortMode("default"); }}
+                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto"
                     >
                         <RotateCcw className="w-3 h-3" />Reset
                     </button>
@@ -432,75 +561,82 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 {/* ── Body ── */}
                 <div className="flex flex-1 overflow-hidden">
 
-                    {/* ── List panel ── */}
-                    <div className="w-[300px] flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+                    {/* ── Sidebar / List panel ── */}
+                    <div className="w-72 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
+
+                        {/* Sidebar header */}
                         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0 gap-2">
-                            <span className="font-bold text-slate-700 text-xs">Danh sách ({filtered.length})</span>
-                            <button
-                                onClick={handleCopyFiltered}
-                                disabled={filtered.length === 0}
-                                title="Copy tất cả mã đơn đã lọc"
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                                    copied
-                                        ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
-                                }`}
-                            >
-                                {copied
-                                    ? <><Check className="w-3 h-3" />Đã copy!</>
-                                    : <><Copy className="w-3 h-3" />Copy ({filtered.length})</>
-                                }
-                            </button>
+                            <span className="font-bold text-slate-700 text-xs">
+                                Danh sách {isLoading && (
+                                <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-indigo-500 rounded-full animate-spin ml-1 align-middle" />
+                            )}
+                                <span className="text-slate-400 font-normal ml-1">({filtered.length})</span>
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                                {/* Sort button */}
+                                <button
+                                    onClick={cycleSortMode}
+                                    title="Sắp xếp theo mã đoạn"
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
+                                        sortMode !== "default"
+                                            ? "bg-indigo-50 text-indigo-700 border-indigo-300"
+                                            : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200"
+                                    }`}
+                                >
+                                    <ArrowUpDown className="w-3 h-3" />
+                                    {sortLabel}
+                                </button>
+                                {/* Copy button */}
+                                <button
+                                    onClick={handleCopyFiltered}
+                                    disabled={filtered.length === 0}
+                                    title="Copy mã vận đơn"
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                                        copied
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
+                                    }`}
+                                >
+                                    {copied ? <><Check className="w-3 h-3" />Đã copy!</> : <><Copy className="w-3 h-3" />Copy</>}
+                                </button>
+                            </div>
                         </div>
 
+                        {/* Bills list */}
                         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5">
                             {filtered.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-16 text-center">
                                     <Package className="w-10 h-10 text-slate-200 mb-3" />
-                                    <p className="text-sm font-semibold text-slate-400">Không có vận đơn nào</p>
+                                    <p className="text-sm font-semibold text-slate-400">
+                                        {isLoading ? "Đang tải dữ liệu..." : "Không có vận đơn nào"}
+                                    </p>
                                 </div>
                             ) : filtered.map(info => {
-                                const badge = STATUS_BADGE[info.stocktakingStatus];
                                 const isSelected = selectedWaybill === info.waybill;
                                 return (
                                     <div
                                         key={info.waybill}
                                         onClick={() => handleSelectWaybill(info.waybill)}
                                         onMouseEnter={() => prefetchIssue(info.waybill)}
-                                        className={`rounded-xl border cursor-pointer transition-all duration-150 px-3.5 py-2.5 slide-in relative overflow-hidden ${
+                                        className={`rounded-xl border cursor-pointer transition-all duration-200 py-2.5 relative overflow-hidden ${
                                             isSelected
-                                                ? "bg-indigo-50 border-indigo-300 shadow-sm"
-                                                : info.stocktakingStatus === "checked"
-                                                    ? "bg-emerald-50/60 border-emerald-200 hover:border-emerald-300"
-                                                    : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm"
+                                                ? 'bg-indigo-50 border-indigo-300 shadow-sm pl-4 pr-3'
+                                                : `${info.groupColor || 'bg-slate-50 border-slate-200'} hover:shadow-sm px-3`
                                         }`}
                                     >
-                                        {isSelected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500 rounded-l-xl" />}
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className={`mono font-bold text-xs ${isSelected ? "text-indigo-700" : "text-slate-800"}`}>
-                                                {info.waybill}
-                                            </span>
-                                            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 ${badge.cls}`}>
-                                                {badge.icon}
-                                                {badge.label}
-                                            </span>
-                                        </div>
-                                        {info.stocktakingStatus === "not_checked" && info.latestScanTypeName && (
-                                            <div className="mt-1.5 flex items-center gap-1.5">
-                                                <Circle className="w-2 h-2 text-amber-400 fill-amber-400 flex-shrink-0" />
-                                                <span className="text-[11px] text-slate-500 truncate">{info.latestScanTypeName}</span>
-                                                {info.latestScanTime && (
-                                                    <span className="text-[10px] text-slate-400 ml-auto flex-shrink-0">{formatTime(info.latestScanTime)}</span>
-                                                )}
-                                            </div>
+                                        {isSelected && (
+                                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
                                         )}
-                                        {info.stocktakingStatus === "checked" && info.stocktakingTime && (
-                                            <div className="mt-1.5 flex items-center gap-1.5">
-                                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500 flex-shrink-0" />
-                                                <span className="text-[11px] text-emerald-600">{formatTime(info.stocktakingTime)}</span>
-                                                {info.stocktakingNetworkCode && (
-                                                    <span className="text-[10px] text-slate-400 ml-auto mono">{info.stocktakingNetworkCode}</span>
-                                                )}
+
+                                        {/* Waybill */}
+                                        <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>
+                                            {info.waybill}
+                                        </div>
+
+                                        {/* Terminal dispatch code (mã đoạn) */}
+                                        {info.terminalDispatchCode && (
+                                            <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-indigo-400' : 'text-blue-500'}`}>
+                                                {info.terminalDispatchCode}
                                             </div>
                                         )}
                                     </div>
@@ -509,7 +645,7 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         </div>
                     </div>
 
-                    {/* ── Detail panel ── */}
+                    {/* ── Main content (detail) ── */}
                     <div className="flex-1 flex overflow-hidden">
                         {!selectedWaybill || !selectedInfo ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center bg-slate-50">
@@ -520,54 +656,21 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 <p className="text-xs text-slate-400 mt-1">{filtered.length} vận đơn trong danh sách</p>
                             </div>
                         ) : (
-                            // key=contentKey để trigger fade animation, KHÔNG dùng key=selectedWaybill
                             <div
                                 key={contentKey}
                                 className={`flex flex-1 overflow-hidden transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100 content-fade'}`}
                             >
-                                {/* Left: summary info — skeleton khi transition */}
-                                {isTransitioning ? (
-                                    <DetailPanelSkeleton />
-                                ) : (
-                                    <div className="w-60 flex-shrink-0 border-r border-slate-200 bg-white overflow-y-auto px-4 py-4 space-y-3">
-                                        <div className={`rounded-xl border p-4 ${
-                                            selectedInfo.stocktakingStatus === "checked"
-                                                ? "bg-emerald-50 border-emerald-200"
-                                                : "bg-amber-50 border-amber-200"
-                                        }`}>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Mã vận đơn</p>
-                                            <p className="mono font-bold text-base text-slate-800 mb-2 break-all">{selectedInfo.waybill}</p>
-                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border ${STATUS_BADGE[selectedInfo.stocktakingStatus].cls}`}>
-                                                {STATUS_BADGE[selectedInfo.stocktakingStatus].icon}
-                                                {STATUS_BADGE[selectedInfo.stocktakingStatus].label}
-                                            </span>
-                                        </div>
+                                {/* OrderDetail panel */}
+                                <div className="max-w-[340px] overflow-y-auto border-r border-slate-200">
+                                    <OrderDetail
+                                        waybill={selectedWaybill}
+                                        authToken={authToken}
+                                        cache={detailCacheRef.current.get(selectedWaybill)}
+                                    />
+                                </div>
 
-                                        {selectedInfo.stocktakingStatus === "checked" && (
-                                            <div className="bg-white rounded-xl border border-emerald-200 p-3 space-y-2">
-                                                <p className="font-bold text-slate-700 text-xs flex items-center gap-1.5">
-                                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                                    Kiểm tồn ngày {selectedDate}
-                                                </p>
-                                                <InfoField label="Thời gian"    value={formatTime(selectedInfo.stocktakingTime)} />
-                                                <InfoField label="Mã mạng lưới" value={selectedInfo.stocktakingNetworkCode || "—"} mono />
-                                            </div>
-                                        )}
-
-                                        <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
-                                            <p className="font-bold text-slate-700 text-xs flex items-center gap-1.5">
-                                                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                                Trạng thái cuối
-                                            </p>
-                                            <InfoField label="Trạng thái"   value={selectedInfo.latestScanTypeName || "—"} />
-                                            <InfoField label="Thời gian"    value={formatTime(selectedInfo.latestScanTime)} />
-                                            <InfoField label="Mã mạng lưới" value={selectedInfo.latestScanNetworkCode || "—"} mono />
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Right: pod + issue history (không dùng key= → không unmount) */}
-                                <div className="flex-1 p-4 flex flex-col gap-3 overflow-hidden bg-slate-50">
+                                {/* PodHistory + IssueHistory */}
+                                <div className="flex-1 p-4 flex flex-col gap-3 overflow-hidden">
                                     <div className="flex-[2] min-h-0">
                                         <PodHistory
                                             waybill={selectedWaybill}
@@ -593,15 +696,5 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 </footer>
             </div>
         </>
-    );
-}
-
-// ─── Sub-components ────────────────────────────────────────────────────────────
-function InfoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-    return (
-        <div className="bg-slate-50 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
-            <p className={`text-xs font-semibold text-slate-700 truncate ${mono ? "font-mono" : ""}`}>{value}</p>
-        </div>
     );
 }

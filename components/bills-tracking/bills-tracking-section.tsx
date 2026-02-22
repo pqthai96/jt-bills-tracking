@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
 import axios from "axios";
 import {
     Search, Package, Filter, RotateCcw, X,
-    ArrowLeft, Truck, RefreshCw, Copy, Check,
+    ArrowLeft, Truck, RefreshCw, Copy, Check, ArrowUpDown,
 } from "lucide-react";
 
 // ─── Font loader ──────────────────────────────────────────────────────────────
@@ -58,6 +58,10 @@ export interface DetailCache {
     issueHistory: any[];
 }
 
+// Sort theo phần thứ 3 của mã đoạn (index 2), ví dụ "005" trong "805-A028M08-005"
+// Các đơn có phần thứ 2 (index 1) khác nhau thì nhóm riêng — để cuối danh sách
+type SortMode = "default" | "dispatch_asc" | "dispatch_desc";
+
 const GROUP_COLORS = [
     'bg-blue-50 border-blue-200',
     'bg-emerald-50 border-emerald-200',
@@ -79,9 +83,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [billsList, setBillsList]               = useState<string[]>(bills);
     const [isSearchExpanded, setIsSearchExpanded] = useState<boolean>(true);
 
-    const [ordersData, setOrdersData]       = useState<OrderData[]>([]);
-    const [groupedOrders, setGroupedOrders] = useState<GroupedOrder[]>([]);
-    const [filteredBills, setFilteredBills] = useState<string[]>([]);
+    const [ordersData, setOrdersData]         = useState<OrderData[]>([]);
+    const [groupedOrders, setGroupedOrders]   = useState<GroupedOrder[]>([]);
+    const [filteredBills, setFilteredBills]   = useState<string[]>([]);
     const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
 
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
@@ -89,12 +93,13 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [show028M08, setShow028M08]               = useState<boolean>(true);
     const [showNon028M08, setShowNon028M08]         = useState<boolean>(true);
     const [copied, setCopied]                       = useState(false);
+    const [sortMode, setSortMode]                   = useState<SortMode>("default");
 
-    // ── Cache: lưu dữ liệu đã fetch để tránh re-fetch khi click lại ──────────
+    // ── Cache ─────────────────────────────────────────────────────────────────
     const detailCacheRef = useRef<Map<string, DetailCache>>(new Map());
 
-    // ── Transition: fade mượt khi đổi mã ─────────────────────────────────────
-    const [contentKey, setContentKey] = useState(0);
+    // ── Transition ────────────────────────────────────────────────────────────
+    const [contentKey, setContentKey]       = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
@@ -148,9 +153,72 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         return grouped;
     };
 
-    // ── Prefetch: tải trước dữ liệu khi hover ────────────────────────────────
+    // ── Sorted bill list (computed) ───────────────────────────────────────────
+    // Logic: sort theo phần thứ 3 (parts[2], ví dụ "005") trong cùng nhóm phần thứ 2 (parts[1], ví dụ "A028M08")
+    // Các nhóm parts[1] khác nhau → giữ nhóm chính (xuất hiện nhiều nhất) ở giữa,
+    // các nhóm khác xếp cuối (sort_asc) hoặc đầu (sort_desc)
+    const sortedBillsList = useMemo(() => {
+        if (sortMode === "default") return billsList;
+
+        // Build map waybill → { part1, part2, part3 }
+        const partMap = new Map<string, { p1: string; p2: string; p3: string }>();
+        groupedOrders.forEach(o => {
+            const parts = (o.terminalDispatchCode || "").split('-');
+            partMap.set(o.waybill, {
+                p1: parts[0] || "",
+                p2: parts[1] || "",
+                p3: parts[2] || "",
+            });
+        });
+
+        // Tìm nhóm p2 xuất hiện nhiều nhất (nhóm chính)
+        const p2Count = new Map<string, number>();
+        billsList.forEach(w => {
+            const p = partMap.get(w);
+            if (p?.p2) p2Count.set(p.p2, (p2Count.get(p.p2) || 0) + 1);
+        });
+        let mainP2 = "";
+        let maxCount = 0;
+        p2Count.forEach((count, p2) => { if (count > maxCount) { maxCount = count; mainP2 = p2; } });
+
+        return [...billsList].sort((a, b) => {
+            const pa = partMap.get(a) ?? { p1: "", p2: "", p3: "" };
+            const pb = partMap.get(b) ?? { p1: "", p2: "", p3: "" };
+            const aIsMain = pa.p2 === mainP2;
+            const bIsMain = pb.p2 === mainP2;
+
+            if (sortMode === "dispatch_asc") {
+                // Nhóm chính trước, nhóm khác sau
+                if (aIsMain && !bIsMain) return -1;
+                if (!aIsMain && bIsMain) return 1;
+                // Cùng nhóm → sort theo p3
+                if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
+                // Cả 2 đều không phải nhóm chính → sort theo p2 rồi p3
+                return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
+            } else {
+                // dispatch_desc: nhóm chính sau, nhóm khác trước (đảo ngược)
+                if (aIsMain && !bIsMain) return 1;
+                if (!aIsMain && bIsMain) return -1;
+                if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
+                return pb.p2.localeCompare(pa.p2) || pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
+            }
+        });
+    }, [billsList, groupedOrders, sortMode]);
+
+    const sortLabel = sortMode === "dispatch_asc" ? "Mã đoạn ↑"
+        : sortMode === "dispatch_desc" ? "Mã đoạn ↓"
+            : "Mặc định";
+
+    const cycleSortMode = () => {
+        setSortMode(prev =>
+            prev === "default"      ? "dispatch_asc"  :
+                prev === "dispatch_asc" ? "dispatch_desc" : "default"
+        );
+    };
+
+    // ── Prefetch ──────────────────────────────────────────────────────────────
     const prefetchDetail = useCallback(async (waybill: string) => {
-        if (detailCacheRef.current.has(waybill)) return; // đã có cache
+        if (detailCacheRef.current.has(waybill)) return;
         try {
             const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
                 axios.post(
@@ -174,12 +242,10 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                 podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
                 issueHistory: issueResp.data?.data?.records ?? [],
             });
-        } catch {
-            // prefetch thất bại → component con sẽ tự fetch lại
-        }
+        } catch { }
     }, [authToken]);
 
-    // ── Chọn mã với fade transition ───────────────────────────────────────────
+    // ── Select with transition ────────────────────────────────────────────────
     const handleSelectCode = useCallback((code: string) => {
         if (code === selectedCode) return;
         setIsTransitioning(true);
@@ -204,7 +270,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     // ── API ───────────────────────────────────────────────────────────────────
     const loadOrdersData = async () => {
         setIsLoadingOrders(true);
-        detailCacheRef.current.clear(); // xoá cache khi refresh
+        detailCacheRef.current.clear();
         try {
             const mockData: OrderData[] = [];
             await Promise.all(bills.map(async (bill) => {
@@ -286,6 +352,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     };
 
     const removeParsedCode = (code: string) => setParsedCodes(prev => prev.filter(c => c !== code));
+
     const handleSearch = () => {
         if (parsedCodes.length > 0) {
             detailCacheRef.current.clear();
@@ -293,36 +360,35 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             handleSelectCode(parsedCodes[0]);
         }
     };
+
     const handleStatusChange = (status: string, checked: boolean) =>
         setSelectedStatuses(prev => checked ? [...prev, status] : prev.filter(s => s !== status));
-    const handleSelectAllStatuses = (all: boolean) => setSelectedStatuses(all ? [...availableStatuses] : []);
 
-    // ── Làm mới ───────────────────────────────────────────────────────────────
+    const handleSelectAllStatuses = (all: boolean) =>
+        setSelectedStatuses(all ? [...availableStatuses] : []);
+
     const handleRefresh = () => {
         detailCacheRef.current.clear();
+        setSortMode("default");
         if (isBillTracking) {
-            if (billsList.length > 0) {
-                setSelectedCode(null);
-                setBillsList([...billsList]);
-            }
+            if (billsList.length > 0) { setSelectedCode(null); setBillsList([...billsList]); }
         } else {
             loadOrdersData();
         }
     };
 
-    // ── Copy ──────────────────────────────────────────────────────────────────
     const handleCopy = () => {
-        navigator.clipboard.writeText(billsList.join("\n")).then(() => {
+        navigator.clipboard.writeText(sortedBillsList.join("\n")).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         });
     };
 
-    // ── Reset filters ─────────────────────────────────────────────────────────
     const clearFilters = () => {
         setSelectedStatuses([...availableStatuses]);
         setShow028M08(true);
         setShowNon028M08(true);
+        setSortMode("default");
     };
 
     // ── Loading screen ────────────────────────────────────────────────────────
@@ -484,32 +550,53 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                             </div>
                         )}
 
-                        {/* Bills list */}
+                        {/* Bills list header */}
                         <div className="flex-1 overflow-hidden flex flex-col cursor-pointer" onClick={() => setIsSearchExpanded(false)}>
                             <div className="px-4 pt-4 pb-2 flex-shrink-0 flex items-center justify-between gap-2">
                                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide flex gap-2 items-center">
-                                    Danh sách {isLoadingOrders && (
-                                    <div className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin ml-auto" />
-                                )}
+                                    Danh sách
+                                    {isLoadingOrders && (
+                                        <div className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                                    )}
                                 </span>
-                                <button
-                                    onClick={e => { e.stopPropagation(); handleCopy(); }}
-                                    disabled={billsList.length === 0}
-                                    title="Copy tất cả mã vận đơn"
-                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                                        copied
-                                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                                            : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300"
-                                    }`}
-                                >
-                                    {copied
-                                        ? <><Check className="w-3 h-3" />Copied!</>
-                                        : <><Copy className="w-3 h-3" />({billsList.length})</>
-                                    }
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                    {/* Sort button — chỉ hiện khi có mã đoạn (không phải isBillTracking thuần) */}
+                                    {!isBillTracking && groupedOrders.length > 0 && (
+                                        <button
+                                            onClick={e => { e.stopPropagation(); cycleSortMode(); }}
+                                            title="Sắp xếp theo mã đoạn"
+                                            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
+                                                sortMode !== "default"
+                                                    ? "bg-violet-50 text-violet-700 border-violet-300"
+                                                    : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200"
+                                            }`}
+                                        >
+                                            <ArrowUpDown className="w-3 h-3" />
+                                            {isSearchExpanded ? sortLabel : ""}
+                                        </button>
+                                    )}
+                                    {/* Copy button */}
+                                    <button
+                                        onClick={e => { e.stopPropagation(); handleCopy(); }}
+                                        disabled={sortedBillsList.length === 0}
+                                        title="Copy tất cả mã vận đơn"
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                                            copied
+                                                ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                                : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300"
+                                        }`}
+                                    >
+                                        {copied
+                                            ? <><Check className="w-3 h-3" />Copied!</>
+                                            : <><Copy className="w-3 h-3" />({sortedBillsList.length})</>
+                                        }
+                                    </button>
+                                </div>
                             </div>
+
+                            {/* Bills list */}
                             <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-1.5">
-                                {billsList.length === 0 ? (
+                                {sortedBillsList.length === 0 ? (
                                     <div className="text-center py-10">
                                         <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
                                         <p className="text-sm font-semibold text-slate-400">
@@ -517,7 +604,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                         </p>
                                     </div>
                                 ) : (
-                                    billsList.map(code => {
+                                    sortedBillsList.map(code => {
                                         const groupedOrder = groupedOrders.find(o => o.waybill === code);
                                         const isSelected = selectedCode === code;
                                         return (
@@ -537,7 +624,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                                 <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
                                                     {code}
                                                 </div>
-                                                {!isBillTracking && groupedOrder?.terminalDispatchCode && !isSearchExpanded && (
+                                                {!isBillTracking && groupedOrder?.terminalDispatchCode && (
                                                     <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
                                                         {groupedOrder.terminalDispatchCode}
                                                     </div>
@@ -559,19 +646,17 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                         <Package className="w-8 h-8 text-slate-300" />
                                     </div>
                                     <p className="font-bold text-slate-500">Chọn một mã vận đơn để xem chi tiết</p>
-                                    {billsList.length > 0 && (
-                                        <p className="text-xs text-slate-400 mt-1">Có {billsList.length} vận đơn trong danh sách</p>
+                                    {sortedBillsList.length > 0 && (
+                                        <p className="text-xs text-slate-400 mt-1">Có {sortedBillsList.length} vận đơn trong danh sách</p>
                                     )}
                                 </div>
                             </div>
                         ) : (
-                            // key=contentKey để trigger animation, KHÔNG dùng key=selectedCode
                             <div
                                 key={contentKey}
                                 className={`flex flex-1 overflow-hidden transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100 content-fade'}`}
                             >
                                 <div className="max-w-[340px] overflow-y-auto border-r border-slate-200">
-                                    {/* Không dùng key= ở đây — component tự quản lý bằng useEffect([waybill]) */}
                                     <OrderDetail
                                         waybill={selectedCode}
                                         authToken={authToken}
