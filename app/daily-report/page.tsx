@@ -510,7 +510,7 @@ export default function DailyReportSection() {
                                 - SỐ ĐƠN CHUYỂN HOÀN: <span className="font-semibold text-slate-900">{allRebackBills.length} đơn</span><br/>
                                 - LƯỢNG HÀNG NHẬN TRONG NGÀY: <span className="font-semibold text-slate-900">{receiveNum} đơn</span><br/>
                                 - TỶ LỆ NHẬN KIỆN THÀNH CÔNG: <span className="font-semibold text-indigo-600">{receiveSuccessRate}</span><br/>
-                                - SẢN LƯỢNG ĐƠN TRUYỀN THỐNG TRONG NGÀY: <span className="font-semibold text-slate-900">{traditionalBills.length}</span><br/>
+                                - SẢN LƯỢNG ĐƠN TRUYỀN THỐNG TRONG NGÀY: <span className="font-semibold text-slate-900">{traditionalBills.length} đơn</span><br/>
                                 <span className="invisible">- placeholder<br/></span>
                                 <span className="invisible">- placeholder<br/></span>
                                 <span className="invisible">- placeholder<br/></span>
@@ -532,10 +532,10 @@ export default function DailyReportSection() {
                                 - SỐ PHIẾU KÝ NHẬN: <span className="font-semibold text-slate-900">{signCount} đơn</span><br/>
                                 - LƯỢNG HÀNG TỒN HÔM NAY: <span className="font-semibold text-slate-900">{reserveNum} đơn</span><br/>
                                 - LƯỢNG NHẬN HÀNG THÀNH CÔNG: <span className="font-semibold text-slate-900">{receiveNum} đơn</span><br/>
-                                - LƯỢNG NHẬN HÀNG TRUYỀN THỐNG: <span className="font-semibold text-slate-900">{traditionalBills.length}</span><br/>
+                                - LƯỢNG NHẬN HÀNG TRUYỀN THỐNG: <span className="font-semibold text-slate-900">{traditionalBills.length} đơn</span><br/>
                                 - TỶ LỆ NHẬN KIỆN THÀNH CÔNG: <span className="font-semibold text-indigo-600">{receiveSuccessRate}</span><br/>
-                                - SỐ ĐƠN CHUYỂN HOÀN TRONG NGÀY: <span className="font-semibold text-slate-900">{allRebackBills.length}</span><br/>
-                                - HÀNG ĐẾN TIKTOK: <span className="font-semibold text-slate-900">{tiktokOrders.length}</span><br/>
+                                - SỐ ĐƠN CHUYỂN HOÀN TRONG NGÀY: <span className="font-semibold text-slate-900">{allRebackBills.length} đơn</span><br/>
+                                - HÀNG ĐẾN TIKTOK: <span className="font-semibold text-slate-900">{tiktokOrders.length} đơn</span><br/>
                                 - SỐ ĐƠN CHUYỂN HOÀN TIKTOK: <span className="font-semibold text-slate-900">{allTiktokRebacks.length} đơn</span><br/>
                                 <span className="invisible">- placeholder<br/></span>
                                 <span className="invisible">- placeholder<br/></span>

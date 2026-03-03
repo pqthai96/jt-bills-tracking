@@ -597,7 +597,7 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                             : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
                                     }`}
                                 >
-                                    {copied ? <><Check className="w-3 h-3" />Đã copy!</> : <><Copy className="w-3 h-3" />Copy</>}
+                                    {copied ? <><Check className="w-3 h-3" /></> : <><Copy className="w-3 h-3" /></>}
                                 </button>
                             </div>
                         </div>
