@@ -63,6 +63,9 @@ interface BillInfo {
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const STOCKTAKING_KEYWORDS = ["kiểm tồn", "stocktaking", "kiểm kho", "tồn kho", "inventory"];
 
+// Trạng thái bị loại trừ — không dùng làm trạng thái filter / trạng thái cuối
+const EXCLUDED_SCAN_TYPE = 'Lịch sử cuộc gọi-phát';
+
 const GROUP_COLORS = [
     'bg-blue-50 border-blue-200',
     'bg-emerald-50 border-emerald-200',
@@ -120,6 +123,21 @@ function assignGroupColors(bills: { waybill: string; terminalDispatchCode: strin
         }
     });
     return colorMap;
+}
+
+/**
+ * Lấy entry tracking đầu tiên không phải EXCLUDED_SCAN_TYPE.
+ * details đã được sắp xếp mới nhất trước (index 0 = mới nhất).
+ */
+function pickValidTrackingEntry(details: any[]): { scanTypeName: string; scanNetworkCode: string; scanTime: string } {
+    const entry = details.find(
+        (d: any) => d?.scanTypeName && d.scanTypeName !== EXCLUDED_SCAN_TYPE
+    );
+    return {
+        scanTypeName:   entry?.scanTypeName   || 'Không có trạng thái',
+        scanNetworkCode: entry?.scanNetworkCode || '',
+        scanTime:        entry?.scanTime        || '',
+    };
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
@@ -186,16 +204,11 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
         if (sortMode === "default") return result;
 
-        // Parse parts từ terminalDispatchCode: "805-A028M08-005" → p1=805, p2=A028M08, p3=005
-        // Sort theo p3 (phần thứ 3), nhưng các nhóm p2 khác nhau thì tách riêng
-        // → Nhóm p2 xuất hiện nhiều nhất = nhóm chính, xếp giữa
-        // → Các nhóm p2 khác: dispatch_asc → cuối danh sách; dispatch_desc → đầu danh sách
         const getParts = (code: string) => {
             const parts = (code || "").split('-');
             return { p1: parts[0] || "", p2: parts[1] || "", p3: parts[2] || "" };
         };
 
-        // Tìm nhóm p2 chính (xuất hiện nhiều nhất)
         const p2Count = new Map<string, number>();
         result.forEach(b => {
             const { p2 } = getParts(b.terminalDispatchCode);
@@ -212,15 +225,11 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             const bIsMain = pb.p2 === mainP2;
 
             if (sortMode === "dispatch_asc") {
-                // Nhóm chính trước, nhóm khác sau
                 if (aIsMain && !bIsMain) return -1;
                 if (!aIsMain && bIsMain) return 1;
-                // Cùng nhóm p2 → sort theo p3
                 if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
-                // Cả 2 đều nhóm phụ → sort theo p2 rồi p3
                 return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
             } else {
-                // dispatch_desc: nhóm chính sau, nhóm phụ trước
                 if (aIsMain && !bIsMain) return 1;
                 if (!aIsMain && bIsMain) return -1;
                 if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
@@ -258,7 +267,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         const dateStart = `${selectedDate} 00:00:00`;
         const dateEnd   = `${selectedDate} 23:59:59`;
 
-        // Fetch tất cả đơn song song
         const rawResults = await Promise.all(
             bills.map(async (waybill) => {
                 try {
@@ -277,12 +285,16 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
                     const terminalDispatchCode = orderResp.data?.data?.details?.terminalDispatchCode || '';
                     const details: any[]       = trackingResp.data?.data?.[0]?.details || [];
-                    const todayStocktaking     = details.find(d =>
+
+                    // Kiểm tra kiểm tồn trong ngày (không lọc EXCLUDED vì đây là event cụ thể)
+                    const todayStocktaking = details.find(d =>
                         d.scanTime >= dateStart && d.scanTime <= dateEnd && isStocktakingEvent(d.scanTypeName)
                     );
-                    const latest = details[0];
 
-                    // Pre-cache POD history (đã có data từ tracking resp)
+                    // Lấy trạng thái thực gần nhất — bỏ qua EXCLUDED_SCAN_TYPE
+                    const { scanTypeName, scanNetworkCode, scanTime } = pickValidTrackingEntry(details);
+
+                    // Pre-cache POD history
                     detailCacheRef.current.set(waybill, {
                         orderDetail: orderResp.data?.data?.details ?? null,
                         podHistory: [...details].reverse(),
@@ -293,9 +305,9 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         waybill,
                         terminalDispatchCode,
                         stocktakingStatus: (todayStocktaking ? "checked" : "not_checked") as StocktakingStatus,
-                        latestScanTypeName:     latest?.scanTypeName    || "Không có trạng thái",
-                        latestScanTime:         latest?.scanTime        || "",
-                        latestScanNetworkCode:  latest?.scanNetworkCode || "",
+                        latestScanTypeName:     scanTypeName,
+                        latestScanTime:         scanTime,
+                        latestScanNetworkCode:  scanNetworkCode,
                         stocktakingTime:        todayStocktaking?.scanTime        || "",
                         stocktakingNetworkCode: todayStocktaking?.scanNetworkCode || "",
                     };
@@ -330,7 +342,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
     // ── Fetch chi tiết đơn khi click (luôn refresh) ───────────────────────────
     const fetchDetailForWaybill = useCallback(async (waybill: string) => {
-        // Xoá cache cũ để force re-fetch mới nhất
         detailCacheRef.current.delete(waybill);
         try {
             const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
@@ -364,7 +375,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     const handleSelectWaybill = useCallback(async (waybill: string) => {
         if (waybill === selectedWaybill) return;
         setIsTransitioning(true);
-        // Fetch dữ liệu mới trong lúc transition
         await fetchDetailForWaybill(waybill);
         setSelectedWaybill(waybill);
         setContentKey(k => k + 1);
@@ -573,7 +583,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 <span className="text-slate-400 font-normal ml-1">({filtered.length})</span>
                             </span>
                             <div className="flex items-center gap-1.5">
-                                {/* Sort button */}
                                 <button
                                     onClick={cycleSortMode}
                                     title="Sắp xếp theo mã đoạn"
@@ -586,7 +595,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                     <ArrowUpDown className="w-3 h-3" />
                                     {sortLabel}
                                 </button>
-                                {/* Copy button */}
                                 <button
                                     onClick={handleCopyFiltered}
                                     disabled={filtered.length === 0}
@@ -627,13 +635,9 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                         {isSelected && (
                                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
                                         )}
-
-                                        {/* Waybill */}
                                         <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>
                                             {info.waybill}
                                         </div>
-
-                                        {/* Terminal dispatch code (mã đoạn) */}
                                         {info.terminalDispatchCode && (
                                             <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-indigo-400' : 'text-blue-500'}`}>
                                                 {info.terminalDispatchCode}
@@ -660,7 +664,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 key={contentKey}
                                 className={`flex flex-1 overflow-hidden transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100 content-fade'}`}
                             >
-                                {/* OrderDetail panel */}
                                 <div className="max-w-[340px] overflow-y-auto border-r border-slate-200">
                                     <OrderDetail
                                         waybill={selectedWaybill}
@@ -668,8 +671,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                         cache={detailCacheRef.current.get(selectedWaybill)}
                                     />
                                 </div>
-
-                                {/* PodHistory + IssueHistory */}
                                 <div className="flex-1 p-4 flex flex-col gap-3 overflow-hidden">
                                     <div className="flex-[2] min-h-0">
                                         <PodHistory

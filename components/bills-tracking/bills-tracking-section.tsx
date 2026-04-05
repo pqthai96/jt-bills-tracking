@@ -8,6 +8,7 @@ import axios from "axios";
 import {
     Search, Package, Filter, RotateCcw, X,
     ArrowLeft, Truck, RefreshCw, Copy, Check, ArrowUpDown,
+    Clock,
 } from "lucide-react";
 
 // ─── Font loader ──────────────────────────────────────────────────────────────
@@ -26,6 +27,23 @@ const FontLoader = () => (
             to   { opacity: 1; }
         }
         .content-fade { animation: content-fade 0.18s ease-out; }
+
+        @keyframes progress-shimmer {
+            0%   { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+        .progress-shimmer {
+            background: linear-gradient(
+                90deg,
+                #6d28d9 0%,
+                #8b5cf6 40%,
+                #a78bfa 50%,
+                #8b5cf6 60%,
+                #6d28d9 100%
+            );
+            background-size: 200% auto;
+            animation: progress-shimmer 1.8s linear infinite;
+        }
     `}</style>
 );
 
@@ -58,8 +76,14 @@ export interface DetailCache {
     issueHistory: any[];
 }
 
-// Sort theo phần thứ 3 của mã đoạn (index 2), ví dụ "005" trong "805-A028M08-005"
-// Các đơn có phần thứ 2 (index 1) khác nhau thì nhóm riêng — để cuối danh sách
+// ─── Progress state ───────────────────────────────────────────────────────────
+interface LoadProgress {
+    total: number;
+    done: number;
+    failed: number;
+    startedAt: number; // Date.now()
+}
+
 type SortMode = "default" | "dispatch_asc" | "dispatch_desc";
 
 const GROUP_COLORS = [
@@ -75,6 +99,251 @@ const GROUP_COLORS = [
     'bg-teal-50 border-teal-200',
 ];
 
+// ─── Virtual scroll ───────────────────────────────────────────────────────────
+const ITEM_HEIGHT    = 58;  // px — chiều cao mỗi item (có mã đoạn)
+const ITEM_HEIGHT_BT = 42;  // px — chiều cao item chế độ isBillTracking
+const OVERSCAN       = 8;   // buffer items trên/dưới viewport
+
+function calcVirt(totalItems: number, itemHeight: number, scrollTop: number, viewportH: number) {
+    const totalHeight = totalItems * itemHeight;
+    const startIndex  = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
+    const endIndex    = Math.min(totalItems - 1, Math.ceil((scrollTop + viewportH) / itemHeight) + OVERSCAN);
+    return { startIndex, endIndex, totalHeight };
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const BATCH_SIZE = 5;       // số đơn xử lý song song mỗi batch
+const MAX_RETRY  = 3;       // số lần thử lại khi lỗi
+const RETRY_DELAY_MS = 800; // thời gian chờ giữa các lần retry (ms)
+
+// Trạng thái bị loại trừ — không dùng làm trạng thái filter
+const EXCLUDED_SCAN_TYPE = 'Lịch sử cuộc gọi-phát';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+async function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Retry wrapper: thử lại tối đa `maxRetry` lần khi có lỗi */
+async function withRetry<T>(fn: () => Promise<T>, maxRetry = MAX_RETRY): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastErr = err;
+            if (attempt < maxRetry) await sleep(RETRY_DELAY_MS * (attempt + 1));
+        }
+    }
+    throw lastErr;
+}
+
+/** Chạy một mảng task theo từng batch, gọi onProgress sau mỗi item xong */
+async function runInBatches<T>(
+    items: T[],
+    handler: (item: T) => Promise<void>,
+    onProgress: (doneCount: number, failedCount: number) => void,
+    batchSize = BATCH_SIZE,
+) {
+    let done = 0;
+    let failed = 0;
+
+    for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        await Promise.all(
+            batch.map(async item => {
+                try {
+                    await handler(item);
+                    done++;
+                } catch {
+                    failed++;
+                    done++;
+                }
+                onProgress(done, failed);
+            })
+        );
+    }
+}
+
+/** Format giây thành chuỗi dễ đọc */
+function formatETA(seconds: number): string {
+    if (!isFinite(seconds) || seconds <= 0) return "...";
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}p ${s}s` : `${m}p`;
+}
+
+/**
+ * Lấy entry tracking đầu tiên không phải EXCLUDED_SCAN_TYPE.
+ * details đã được sắp xếp mới nhất trước (index 0 = mới nhất).
+ */
+function pickValidTrackingEntry(details: any[]): { scanTypeName: string; scanNetworkCode: string } {
+    const entry = details.find(
+        (d: any) => d?.scanTypeName && d.scanTypeName !== EXCLUDED_SCAN_TYPE
+    );
+    return {
+        scanTypeName: entry?.scanTypeName || 'Không có trạng thái',
+        scanNetworkCode: entry?.scanNetworkCode || '',
+    };
+}
+
+// ─── Progress bar component ───────────────────────────────────────────────────
+function LoadProgressBar({ progress }: { progress: LoadProgress }) {
+    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+    const elapsed = (Date.now() - progress.startedAt) / 1000;
+    const rate = progress.done > 0 ? progress.done / elapsed : 0; // items/s
+    const remaining = progress.total - progress.done;
+    const etaSec = rate > 0 ? remaining / rate : Infinity;
+
+    return (
+        <div className="bg-violet-50 border-b border-violet-200 px-5 py-2.5 flex-shrink-0 animate-fade-in">
+            <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+                    <span className="text-xs font-bold text-violet-700">
+                        Đang tải dữ liệu... {progress.done}/{progress.total} đơn
+                        {progress.failed > 0 && (
+                            <span className="text-amber-600 ml-1.5">({progress.failed} lỗi)</span>
+                        )}
+                    </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-violet-500 font-semibold">
+                    <Clock className="w-3 h-3" />
+                    {pct < 100 ? (
+                        <span>
+                            Còn lại ~<span className="text-violet-700">{formatETA(etaSec)}</span>
+                        </span>
+                    ) : (
+                        <span className="text-emerald-600">Hoàn tất!</span>
+                    )}
+                    <span className="text-violet-400">·</span>
+                    <span className="text-violet-700">{pct}%</span>
+                </div>
+            </div>
+
+            {/* Track */}
+            <div className="h-2 bg-violet-200/60 rounded-full overflow-hidden">
+                <div
+                    className="h-full rounded-full transition-all duration-300 ease-out progress-shimmer"
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+
+            {/* Sub-info */}
+            <div className="flex justify-between mt-1">
+                <span className="text-[10px] text-violet-400 font-medium">
+                    {rate > 0 ? `${rate.toFixed(1)} đơn/s` : "Đang khởi động..."}
+                </span>
+                <span className="text-[10px] text-violet-400 font-medium">
+                    {progress.total - progress.done > 0
+                        ? `Còn ${progress.total - progress.done} đơn`
+                        : "Đang hoàn tất..."}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+
+// ─── VirtualList component ────────────────────────────────────────────────────
+interface VirtualListProps {
+    items:          string[];
+    isBillTracking: boolean;
+    selectedCode:   string | null;
+    groupedOrderMap: Map<string, GroupedOrder>;
+    onSelect:       (code: string) => void;
+    onHover:        (code: string) => void;
+}
+
+function VirtualList({ items, isBillTracking, selectedCode, groupedOrderMap, onSelect, onHover }: VirtualListProps) {
+    const itemH   = isBillTracking ? ITEM_HEIGHT_BT : ITEM_HEIGHT;
+    const GAP     = 6;
+    const [scrollTop, setScrollTop] = useState(0);
+    const [viewportH, setViewportH] = useState(600);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        setViewportH(el.clientHeight);
+        const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    useEffect(() => {
+        if (!selectedCode || !containerRef.current) return;
+        const idx = items.indexOf(selectedCode);
+        if (idx < 0) return;
+        const el = containerRef.current;
+        const top = idx * itemH;
+        const bot = top + itemH;
+        if (top < el.scrollTop || bot > el.scrollTop + el.clientHeight) {
+            el.scrollTo({ top: top - el.clientHeight / 2 + itemH / 2, behavior: "smooth" });
+        }
+    }, [selectedCode, items, itemH]);
+
+    const { startIndex, endIndex, totalHeight } = calcVirt(items.length, itemH, scrollTop, viewportH);
+
+    if (items.length === 0) return (
+        <div className="flex-1 flex items-center justify-center py-10">
+            <div className="text-center">
+                <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-slate-400">Chưa có vận đơn</p>
+            </div>
+        </div>
+    );
+
+    return (
+        <div
+            ref={containerRef}
+            className="flex-1 overflow-y-auto px-3 pb-2"
+            onScroll={e => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
+        >
+            <div style={{ position: "relative", height: totalHeight }}>
+                {items.slice(startIndex, endIndex + 1).map((code, relIdx) => {
+                    const absIdx      = startIndex + relIdx;
+                    const groupedOrder = groupedOrderMap.get(code);
+                    const isSelected  = selectedCode === code;
+                    return (
+                        <div
+                            key={code}
+                            style={{
+                                position: "absolute",
+                                top:      absIdx * itemH + GAP / 2,
+                                left:     0,
+                                right:    0,
+                                height:   itemH - GAP,
+                            }}
+                            onClick={() => onSelect(code)}
+                            onMouseEnter={() => onHover(code)}
+                            className={`rounded-xl border cursor-pointer transition-colors duration-150 relative overflow-hidden flex flex-col justify-center ${
+                                isSelected
+                                    ? "bg-violet-50 border-violet-200 shadow-sm pl-4 pr-3"
+                                    : `${groupedOrder?.groupColor || "bg-slate-50 border-slate-200"} hover:shadow-sm px-3`
+                            }`}
+                        >
+                            {isSelected && (
+                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500 rounded-l-xl" />
+                            )}
+                            <div className={`text-center font-mono font-bold text-xs ${isSelected ? "text-violet-700" : "text-slate-800"}`}>
+                                {code}
+                            </div>
+                            {!isBillTracking && groupedOrder?.terminalDispatchCode && (
+                                <div className={`text-center text-xs font-mono mt-0.5 truncate ${isSelected ? "text-violet-400" : "text-blue-500"}`}>
+                                    {groupedOrder.terminalDispatchCode}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function BillsTrackingSection({ bills, authToken, isBillTracking }: BillsTrackingSectionProps) {
 
     const [selectedCode, setSelectedCode]         = useState<string | null>(null);
@@ -83,10 +352,13 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [billsList, setBillsList]               = useState<string[]>(bills);
     const [isSearchExpanded, setIsSearchExpanded] = useState<boolean>(true);
 
-    const [ordersData, setOrdersData]         = useState<OrderData[]>([]);
-    const [groupedOrders, setGroupedOrders]   = useState<GroupedOrder[]>([]);
-    const [filteredBills, setFilteredBills]   = useState<string[]>([]);
-    const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
+    const [ordersData, setOrdersData]             = useState<OrderData[]>([]);
+    const [groupedOrders, setGroupedOrders]       = useState<GroupedOrder[]>([]);
+    const [filteredBills, setFilteredBills]       = useState<string[]>([]);
+    const [isLoadingOrders, setIsLoadingOrders]   = useState<boolean>(false);
+
+    // ── Progress ──────────────────────────────────────────────────────────────
+    const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
 
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses]   = useState<string[]>([]);
@@ -95,14 +367,18 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [copied, setCopied]                       = useState(false);
     const [sortMode, setSortMode]                   = useState<SortMode>("default");
 
-    // ── Cache ─────────────────────────────────────────────────────────────────
-    const detailCacheRef = useRef<Map<string, DetailCache>>(new Map());
-
-    // ── Transition ────────────────────────────────────────────────────────────
-    const [contentKey, setContentKey]       = useState(0);
+    const detailCacheRef   = useRef<Map<string, DetailCache>>(new Map());
+    const [contentKey, setContentKey]           = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
+
+    // ── O(1) lookup map: waybill → GroupedOrder ───────────────────────────────
+    const groupedOrderMap = useMemo(() => {
+        const m = new Map<string, GroupedOrder>();
+        groupedOrders.forEach(o => m.set(o.waybill, o));
+        return m;
+    }, [groupedOrders]);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     const parseTerminalCode = (code: string) => {
@@ -153,25 +429,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         return grouped;
     };
 
-    // ── Sorted bill list (computed) ───────────────────────────────────────────
-    // Logic: sort theo phần thứ 3 (parts[2], ví dụ "005") trong cùng nhóm phần thứ 2 (parts[1], ví dụ "A028M08")
-    // Các nhóm parts[1] khác nhau → giữ nhóm chính (xuất hiện nhiều nhất) ở giữa,
-    // các nhóm khác xếp cuối (sort_asc) hoặc đầu (sort_desc)
+    // ── Sorted bill list ──────────────────────────────────────────────────────
     const sortedBillsList = useMemo(() => {
         if (sortMode === "default") return billsList;
 
-        // Build map waybill → { part1, part2, part3 }
         const partMap = new Map<string, { p1: string; p2: string; p3: string }>();
         groupedOrders.forEach(o => {
             const parts = (o.terminalDispatchCode || "").split('-');
-            partMap.set(o.waybill, {
-                p1: parts[0] || "",
-                p2: parts[1] || "",
-                p3: parts[2] || "",
-            });
+            partMap.set(o.waybill, { p1: parts[0] || "", p2: parts[1] || "", p3: parts[2] || "" });
         });
 
-        // Tìm nhóm p2 xuất hiện nhiều nhất (nhóm chính)
         const p2Count = new Map<string, number>();
         billsList.forEach(w => {
             const p = partMap.get(w);
@@ -188,15 +455,11 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const bIsMain = pb.p2 === mainP2;
 
             if (sortMode === "dispatch_asc") {
-                // Nhóm chính trước, nhóm khác sau
                 if (aIsMain && !bIsMain) return -1;
                 if (!aIsMain && bIsMain) return 1;
-                // Cùng nhóm → sort theo p3
                 if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
-                // Cả 2 đều không phải nhóm chính → sort theo p2 rồi p3
                 return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
             } else {
-                // dispatch_desc: nhóm chính sau, nhóm khác trước (đảo ngược)
                 if (aIsMain && !bIsMain) return 1;
                 if (!aIsMain && bIsMain) return -1;
                 if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
@@ -206,15 +469,11 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     }, [billsList, groupedOrders, sortMode]);
 
     const sortLabel = sortMode === "dispatch_asc" ? "Mã đoạn ↑"
-        : sortMode === "dispatch_desc" ? "Mã đoạn ↓"
-            : "Mặc định";
+        : sortMode === "dispatch_desc" ? "Mã đoạn ↓" : "Mặc định";
 
-    const cycleSortMode = () => {
-        setSortMode(prev =>
-            prev === "default"      ? "dispatch_asc"  :
-                prev === "dispatch_asc" ? "dispatch_desc" : "default"
-        );
-    };
+    const cycleSortMode = () => setSortMode(prev =>
+        prev === "default" ? "dispatch_asc" : prev === "dispatch_asc" ? "dispatch_desc" : "default"
+    );
 
     // ── Prefetch ──────────────────────────────────────────────────────────────
     const prefetchDetail = useCallback(async (waybill: string) => {
@@ -267,43 +526,74 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         if (!isBillTracking) applyStatusFilter();
     }, [selectedStatuses, groupedOrders, show028M08, showNon028M08]);
 
-    // ── API ───────────────────────────────────────────────────────────────────
+    // ── API: load with batching + retry + progress ────────────────────────────
     const loadOrdersData = async () => {
         setIsLoadingOrders(true);
         detailCacheRef.current.clear();
-        try {
-            const mockData: OrderData[] = [];
-            await Promise.all(bills.map(async (bill) => {
+
+        const startedAt = Date.now();
+        setLoadProgress({ total: bills.length, done: 0, failed: 0, startedAt });
+
+        const mockData: OrderData[] = [];
+
+        await runInBatches(
+            bills,
+            async (bill) => {
                 try {
-                    const [orderResp, trackingResp]: [any, any] = await Promise.all([
-                        axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
-                            { waybillNo: bill, countryId: "1" },
-                            { headers: { authToken, lang: 'VN', langType: 'VN' } }
-                        ),
-                        axios.post("https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
-                            { keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1" },
-                            { headers: { authToken, lang: 'VN', langType: 'VN' } }
-                        ),
-                    ]);
+                    const [orderResp, trackingResp]: [any, any] = await withRetry(() =>
+                        Promise.all([
+                            axios.post(
+                                "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                                { waybillNo: bill, countryId: "1" },
+                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                            ),
+                            axios.post(
+                                "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                                { keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                            ),
+                        ])
+                    );
+
+                    // Lấy trạng thái thực gần nhất — bỏ qua EXCLUDED_SCAN_TYPE
+                    const details: any[] = trackingResp.data.data[0]?.details ?? [];
+                    const { scanTypeName, scanNetworkCode } = pickValidTrackingEntry(details);
+
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
-                        scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
-                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '',
+                        scanTypeName,
+                        scanNetworkCode,
                     });
                 } catch {
-                    mockData.push({ waybill: bill, terminalDispatchCode: '', scanTypeName: 'Lỗi tải dữ liệu', scanNetworkCode: '' });
+                    mockData.push({
+                        waybill: bill,
+                        terminalDispatchCode: '',
+                        scanTypeName: 'Lỗi tải dữ liệu',
+                        scanNetworkCode: '',
+                    });
+                    throw new Error("load failed after retries");
                 }
-            }));
+            },
+            (done, failed) => {
+                setLoadProgress({ total: bills.length, done, failed, startedAt });
+            },
+            BATCH_SIZE,
+        );
+
+        try {
             const statuses = Array.from(new Set(mockData.map(o => o.scanTypeName).filter(Boolean)));
             setAvailableStatuses(statuses);
             setSelectedStatuses(statuses);
             setGroupedOrders(createGroupedOrders(mockData));
             setOrdersData(mockData);
         } catch (e) {
-            console.error('Error loading orders data:', e);
+            console.error('Error processing orders data:', e);
         } finally {
-            setIsLoadingOrders(false);
+            setTimeout(() => {
+                setLoadProgress(null);
+                setIsLoadingOrders(false);
+            }, 1200);
         }
     };
 
@@ -439,9 +729,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                             <span className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
                                 {isBillTracking ? billsList.length : `${filteredBills.length} / ${bills.length}`} đơn
                             </span>
-                            {isLoadingOrders && (
-                                <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
-                            )}
                             <button
                                 onClick={handleRefresh}
                                 disabled={isLoadingOrders}
@@ -453,6 +740,11 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         </div>
                     </div>
                 </div>
+
+                {/* ── Progress bar (chỉ hiện khi đang tải) ── */}
+                {!isBillTracking && loadProgress && (
+                    <LoadProgressBar progress={loadProgress} />
+                )}
 
                 {/* ── Filter bar ── */}
                 {!isBillTracking && (
@@ -551,16 +843,15 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         )}
 
                         {/* Bills list header */}
-                        <div className="flex-1 overflow-hidden flex flex-col cursor-pointer" onClick={() => setIsSearchExpanded(false)}>
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col cursor-pointer" onClick={() => setIsSearchExpanded(false)}>
                             <div className="px-4 pt-4 pb-2 flex-shrink-0 flex items-center justify-between gap-2">
                                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide flex gap-2 items-center">
                                     Danh sách
-                                    {isLoadingOrders && (
+                                    {isLoadingOrders && !loadProgress && (
                                         <div className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
                                     )}
                                 </span>
                                 <div className="flex items-center gap-1.5">
-                                    {/* Sort button — chỉ hiện khi có mã đoạn (không phải isBillTracking thuần) */}
                                     {!isBillTracking && groupedOrders.length > 0 && (
                                         <button
                                             onClick={e => { e.stopPropagation(); cycleSortMode(); }}
@@ -575,7 +866,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                             {isSearchExpanded ? sortLabel : ""}
                                         </button>
                                     )}
-                                    {/* Copy button */}
                                     <button
                                         onClick={e => { e.stopPropagation(); handleCopy(); }}
                                         disabled={sortedBillsList.length === 0}
@@ -594,46 +884,14 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 </div>
                             </div>
 
-                            {/* Bills list */}
-                            <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-1.5">
-                                {sortedBillsList.length === 0 ? (
-                                    <div className="text-center py-10">
-                                        <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                                        <p className="text-sm font-semibold text-slate-400">
-                                            {!isBillTracking && isLoadingOrders ? "Đang tải dữ liệu..." : "Chưa có vận đơn"}
-                                        </p>
-                                    </div>
-                                ) : (
-                                    sortedBillsList.map(code => {
-                                        const groupedOrder = groupedOrders.find(o => o.waybill === code);
-                                        const isSelected = selectedCode === code;
-                                        return (
-                                            <div
-                                                key={code}
-                                                onClick={e => { e.stopPropagation(); handleSelectCode(code); setIsSearchExpanded(false); }}
-                                                onMouseEnter={() => prefetchDetail(code)}
-                                                className={`rounded-xl border cursor-pointer transition-all duration-200 py-2.5 relative overflow-hidden ${
-                                                    isSelected
-                                                        ? 'bg-violet-50 border-violet-200 shadow-sm pl-4 pr-3'
-                                                        : `${groupedOrder?.groupColor || 'bg-slate-50 border-slate-200'} hover:shadow-sm px-3`
-                                                }`}
-                                            >
-                                                {isSelected && (
-                                                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500" />
-                                                )}
-                                                <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
-                                                    {code}
-                                                </div>
-                                                {!isBillTracking && groupedOrder?.terminalDispatchCode && (
-                                                    <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
-                                                        {groupedOrder.terminalDispatchCode}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })
-                                )}
-                            </div>
+                            <VirtualList
+                                items={sortedBillsList}
+                                isBillTracking={isBillTracking}
+                                selectedCode={selectedCode}
+                                groupedOrderMap={groupedOrderMap}
+                                onSelect={(code) => { handleSelectCode(code); setIsSearchExpanded(false); }}
+                                onHover={prefetchDetail}
+                            />
                         </div>
                     </div>
 
