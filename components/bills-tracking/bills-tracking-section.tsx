@@ -153,6 +153,12 @@ function formatETA(seconds: number): string {
     return s > 0 ? `${m}p ${s}s` : `${m}p`;
 }
 
+// ─── Phân loại đơn hàng ───────────────────────────────────────────────────────
+function isTraditionalOrder(waybill: string): boolean {
+    const prefix = waybill.substring(0, 2);
+    return prefix === "80" || prefix === "84";
+}
+
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 function LoadProgressBar({ progress }: { progress: LoadProgress }) {
     const pct     = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -264,6 +270,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [selectedStatuses, setSelectedStatuses]   = useState<string[]>([]);
     const [show028M08, setShow028M08]               = useState<boolean>(true);
     const [showNon028M08, setShowNon028M08]         = useState<boolean>(true);
+    const [showTraditional, setShowTraditional]     = useState<boolean>(true);
+    const [showEcommerce, setShowEcommerce]         = useState<boolean>(true);
     const [copied, setCopied]                       = useState(false);
     const [sortMode, setSortMode]                   = useState<SortMode>("default");
     const [availableScanners, setAvailableScanners] = useState<string[]>([]);
@@ -438,7 +446,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     useEffect(() => {
         applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, selectedScanners]);
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
     const loadOrdersData = async (targetBills: string[] = bills) => {
@@ -455,6 +463,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedScanners([]);
         setGroupedOrders([]);
         setOrdersData([]);
+        setShowTraditional(true);
+        setShowEcommerce(true);
 
         const mockData: OrderData[] = [];
 
@@ -542,6 +552,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const is028 = od.scanNetworkCode === '028M08';
             if (is028 && !show028M08) return false;
             if (!is028 && !showNon028M08) return false;
+            const isTraditional = isTraditionalOrder(order.waybill);
+            if (isTraditional && !showTraditional) return false;
+            if (!isTraditional && !showEcommerce) return false;
             if (selectedScanners.length > 0 && !selectedScanners.includes(od.lastIssueScanner)) return false;
             return true;
         });
@@ -621,12 +634,22 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedStatuses([...availableStatuses]);
         setShow028M08(true);
         setShowNon028M08(true);
+        setShowTraditional(true);
+        setShowEcommerce(true);
         setSelectedScanners([]);
         setSortMode("default");
     };
 
     // ── Có data để show filter không ─────────────────────────────────────────
     const hasFilterData = availableStatuses.length > 0;
+
+    // ── Thống kê số đơn theo loại (để hiển thị badge) ────────────────────────
+    const orderTypeCounts = useMemo(() => {
+        const allWaybills = groupedOrders.map(o => o.waybill);
+        const traditional = allWaybills.filter(w => isTraditionalOrder(w)).length;
+        const ecommerce   = allWaybills.length - traditional;
+        return { traditional, ecommerce };
+    }, [groupedOrders]);
 
     // ── Loading screen ────────────────────────────────────────────────────────
     if (shouldShowLoading) {
@@ -739,6 +762,39 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 <input type="checkbox" checked={showNon028M08} onChange={e => setShowNon028M08(e.target.checked)}
                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                                 <span className="text-slate-700">Khác</span>
+                            </label>
+
+                            <div className="h-5 w-px bg-slate-200" />
+
+                            {/* Loại đơn hàng */}
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Loại đơn</span>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-orange-300 cursor-pointer transition-all text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={showTraditional}
+                                    onChange={e => setShowTraditional(e.target.checked)}
+                                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-400"
+                                />
+                                <span className="font-semibold text-orange-700">TRUYỀN THỐNG</span>
+                                {orderTypeCounts.traditional > 0 && (
+                                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                                        {orderTypeCounts.traditional}
+                                    </span>
+                                )}
+                            </label>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-violet-300 cursor-pointer transition-all text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={showEcommerce}
+                                    onChange={e => setShowEcommerce(e.target.checked)}
+                                    className="rounded border-slate-300 text-violet-500 focus:ring-violet-400"
+                                />
+                                <span className="font-semibold text-violet-700">ĐƠN SÀN</span>
+                                {orderTypeCounts.ecommerce > 0 && (
+                                    <span className="bg-violet-100 text-violet-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                                        {orderTypeCounts.ecommerce}
+                                    </span>
+                                )}
                             </label>
 
                             {/* Người quét vấn đề */}
