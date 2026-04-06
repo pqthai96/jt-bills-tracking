@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo, useDeferredValue, memo } from "react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
@@ -8,7 +8,7 @@ import axios from "axios";
 import {
     Search, Package, Filter, RotateCcw, X,
     ArrowLeft, Truck, RefreshCw, Copy, Check, ArrowUpDown,
-    Clock,
+    Clock, User,
 } from "lucide-react";
 
 // ─── Font loader ──────────────────────────────────────────────────────────────
@@ -58,6 +58,7 @@ interface OrderData {
     terminalDispatchCode: string;
     scanTypeName: string;
     scanNetworkCode: string;
+    lastIssueScanner: string;
 }
 
 interface GroupedOrder {
@@ -69,19 +70,17 @@ interface GroupedOrder {
     groupColor: string;
 }
 
-// ─── Cache types ──────────────────────────────────────────────────────────────
 export interface DetailCache {
     orderDetail: any;
     podHistory: any[];
     issueHistory: any[];
 }
 
-// ─── Progress state ───────────────────────────────────────────────────────────
 interface LoadProgress {
     total: number;
     done: number;
     failed: number;
-    startedAt: number; // Date.now()
+    startedAt: number;
 }
 
 type SortMode = "default" | "dispatch_asc" | "dispatch_desc";
@@ -99,32 +98,15 @@ const GROUP_COLORS = [
     'bg-teal-50 border-teal-200',
 ];
 
-// ─── Virtual scroll ───────────────────────────────────────────────────────────
-const ITEM_HEIGHT    = 58;  // px — chiều cao mỗi item (có mã đoạn)
-const ITEM_HEIGHT_BT = 42;  // px — chiều cao item chế độ isBillTracking
-const OVERSCAN       = 8;   // buffer items trên/dưới viewport
-
-function calcVirt(totalItems: number, itemHeight: number, scrollTop: number, viewportH: number) {
-    const totalHeight = totalItems * itemHeight;
-    const startIndex  = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
-    const endIndex    = Math.min(totalItems - 1, Math.ceil((scrollTop + viewportH) / itemHeight) + OVERSCAN);
-    return { startIndex, endIndex, totalHeight };
-}
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-const BATCH_SIZE = 5;       // số đơn xử lý song song mỗi batch
-const MAX_RETRY  = 3;       // số lần thử lại khi lỗi
-const RETRY_DELAY_MS = 800; // thời gian chờ giữa các lần retry (ms)
-
-// Trạng thái bị loại trừ — không dùng làm trạng thái filter
-const EXCLUDED_SCAN_TYPE = 'Lịch sử cuộc gọi-phát';
+const BATCH_SIZE     = 5;
+const MAX_RETRY      = 3;
+const RETRY_DELAY_MS = 800;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** Retry wrapper: thử lại tối đa `maxRetry` lần khi có lỗi */
 async function withRetry<T>(fn: () => Promise<T>, maxRetry = MAX_RETRY): Promise<T> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= maxRetry; attempt++) {
@@ -138,7 +120,6 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetry = MAX_RETRY): Promise
     throw lastErr;
 }
 
-/** Chạy một mảng task theo từng batch, gọi onProgress sau mỗi item xong */
 async function runInBatches<T>(
     items: T[],
     handler: (item: T) => Promise<void>,
@@ -147,7 +128,6 @@ async function runInBatches<T>(
 ) {
     let done = 0;
     let failed = 0;
-
     for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, i + batchSize);
         await Promise.all(
@@ -165,7 +145,6 @@ async function runInBatches<T>(
     }
 }
 
-/** Format giây thành chuỗi dễ đọc */
 function formatETA(seconds: number): string {
     if (!isFinite(seconds) || seconds <= 0) return "...";
     if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -174,27 +153,13 @@ function formatETA(seconds: number): string {
     return s > 0 ? `${m}p ${s}s` : `${m}p`;
 }
 
-/**
- * Lấy entry tracking đầu tiên không phải EXCLUDED_SCAN_TYPE.
- * details đã được sắp xếp mới nhất trước (index 0 = mới nhất).
- */
-function pickValidTrackingEntry(details: any[]): { scanTypeName: string; scanNetworkCode: string } {
-    const entry = details.find(
-        (d: any) => d?.scanTypeName && d.scanTypeName !== EXCLUDED_SCAN_TYPE
-    );
-    return {
-        scanTypeName: entry?.scanTypeName || 'Không có trạng thái',
-        scanNetworkCode: entry?.scanNetworkCode || '',
-    };
-}
-
-// ─── Progress bar component ───────────────────────────────────────────────────
+// ─── Progress bar ─────────────────────────────────────────────────────────────
 function LoadProgressBar({ progress }: { progress: LoadProgress }) {
-    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+    const pct     = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
     const elapsed = (Date.now() - progress.startedAt) / 1000;
-    const rate = progress.done > 0 ? progress.done / elapsed : 0; // items/s
+    const rate     = progress.done > 0 ? progress.done / elapsed : 0;
     const remaining = progress.total - progress.done;
-    const etaSec = rate > 0 ? remaining / rate : Infinity;
+    const etaSec   = rate > 0 ? remaining / rate : Infinity;
 
     return (
         <div className="bg-violet-50 border-b border-violet-200 px-5 py-2.5 flex-shrink-0 animate-fade-in">
@@ -211,9 +176,7 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
                 <div className="flex items-center gap-2 text-xs text-violet-500 font-semibold">
                     <Clock className="w-3 h-3" />
                     {pct < 100 ? (
-                        <span>
-                            Còn lại ~<span className="text-violet-700">{formatETA(etaSec)}</span>
-                        </span>
+                        <span>Còn lại ~<span className="text-violet-700">{formatETA(etaSec)}</span></span>
                     ) : (
                         <span className="text-emerald-600">Hoàn tất!</span>
                     )}
@@ -221,16 +184,12 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
                     <span className="text-violet-700">{pct}%</span>
                 </div>
             </div>
-
-            {/* Track */}
             <div className="h-2 bg-violet-200/60 rounded-full overflow-hidden">
                 <div
                     className="h-full rounded-full transition-all duration-300 ease-out progress-shimmer"
                     style={{ width: `${pct}%` }}
                 />
             </div>
-
-            {/* Sub-info */}
             <div className="flex justify-between mt-1">
                 <span className="text-[10px] text-violet-400 font-medium">
                     {rate > 0 ? `${rate.toFixed(1)} đơn/s` : "Đang khởi động..."}
@@ -245,103 +204,45 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
     );
 }
 
+// ─── Context cho selected code ────────────────────────────────────────────────
+const SelectedCodeCtx = React.createContext<string | null>(null);
 
-// ─── VirtualList component ────────────────────────────────────────────────────
-interface VirtualListProps {
-    items:          string[];
-    isBillTracking: boolean;
-    selectedCode:   string | null;
-    groupedOrderMap: Map<string, GroupedOrder>;
-    onSelect:       (code: string) => void;
-    onHover:        (code: string) => void;
-}
-
-function VirtualList({ items, isBillTracking, selectedCode, groupedOrderMap, onSelect, onHover }: VirtualListProps) {
-    const itemH   = isBillTracking ? ITEM_HEIGHT_BT : ITEM_HEIGHT;
-    const GAP     = 6;
-    const [scrollTop, setScrollTop] = useState(0);
-    const [viewportH, setViewportH] = useState(600);
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const el = containerRef.current;
-        if (!el) return;
-        setViewportH(el.clientHeight);
-        const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
-        ro.observe(el);
-        return () => ro.disconnect();
-    }, []);
-
-    useEffect(() => {
-        if (!selectedCode || !containerRef.current) return;
-        const idx = items.indexOf(selectedCode);
-        if (idx < 0) return;
-        const el = containerRef.current;
-        const top = idx * itemH;
-        const bot = top + itemH;
-        if (top < el.scrollTop || bot > el.scrollTop + el.clientHeight) {
-            el.scrollTo({ top: top - el.clientHeight / 2 + itemH / 2, behavior: "smooth" });
-        }
-    }, [selectedCode, items, itemH]);
-
-    const { startIndex, endIndex, totalHeight } = calcVirt(items.length, itemH, scrollTop, viewportH);
-
-    if (items.length === 0) return (
-        <div className="flex-1 flex items-center justify-center py-10">
-            <div className="text-center">
-                <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-sm font-semibold text-slate-400">Chưa có vận đơn</p>
-            </div>
-        </div>
-    );
-
+// ─── BillItem ─────────────────────────────────────────────────────────────────
+const BillItem = memo(function BillItem({
+                                            code, groupColor, terminalDispatchCode, onSelect, onHover,
+                                        }: {
+    code: string;
+    groupColor: string;
+    terminalDispatchCode: string;
+    onSelect: (code: string) => void;
+    onHover:  (code: string) => void;
+}) {
+    const selectedCode = React.useContext(SelectedCodeCtx);
+    const isSelected   = selectedCode === code;
     return (
         <div
-            ref={containerRef}
-            className="flex-1 overflow-y-auto px-3 pb-2"
-            onScroll={e => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
+            onClick={() => onSelect(code)}
+            onMouseEnter={() => onHover(code)}
+            className={`rounded-xl border cursor-pointer transition-all duration-200 py-2.5 relative overflow-hidden ${
+                isSelected
+                    ? 'bg-violet-50 border-violet-200 shadow-sm pl-4 pr-3'
+                    : `${groupColor || 'bg-slate-50 border-slate-200'} hover:shadow-sm px-3`
+            }`}
         >
-            <div style={{ position: "relative", height: totalHeight }}>
-                {items.slice(startIndex, endIndex + 1).map((code, relIdx) => {
-                    const absIdx      = startIndex + relIdx;
-                    const groupedOrder = groupedOrderMap.get(code);
-                    const isSelected  = selectedCode === code;
-                    return (
-                        <div
-                            key={code}
-                            style={{
-                                position: "absolute",
-                                top:      absIdx * itemH + GAP / 2,
-                                left:     0,
-                                right:    0,
-                                height:   itemH - GAP,
-                            }}
-                            onClick={() => onSelect(code)}
-                            onMouseEnter={() => onHover(code)}
-                            className={`rounded-xl border cursor-pointer transition-colors duration-150 relative overflow-hidden flex flex-col justify-center ${
-                                isSelected
-                                    ? "bg-violet-50 border-violet-200 shadow-sm pl-4 pr-3"
-                                    : `${groupedOrder?.groupColor || "bg-slate-50 border-slate-200"} hover:shadow-sm px-3`
-                            }`}
-                        >
-                            {isSelected && (
-                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500 rounded-l-xl" />
-                            )}
-                            <div className={`text-center font-mono font-bold text-xs ${isSelected ? "text-violet-700" : "text-slate-800"}`}>
-                                {code}
-                            </div>
-                            {!isBillTracking && groupedOrder?.terminalDispatchCode && (
-                                <div className={`text-center text-xs font-mono mt-0.5 truncate ${isSelected ? "text-violet-400" : "text-blue-500"}`}>
-                                    {groupedOrder.terminalDispatchCode}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
+            {isSelected && (
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500" />
+            )}
+            <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
+                {code}
             </div>
+            {terminalDispatchCode && (
+                <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
+                    {terminalDispatchCode}
+                </div>
+            )}
         </div>
     );
-}
+});
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function BillsTrackingSection({ bills, authToken, isBillTracking }: BillsTrackingSectionProps) {
@@ -357,8 +258,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [filteredBills, setFilteredBills]       = useState<string[]>([]);
     const [isLoadingOrders, setIsLoadingOrders]   = useState<boolean>(false);
 
-    // ── Progress ──────────────────────────────────────────────────────────────
-    const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
+    const [loadProgress, setLoadProgress]         = useState<LoadProgress | null>(null);
 
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses]   = useState<string[]>([]);
@@ -366,14 +266,19 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [showNon028M08, setShowNon028M08]         = useState<boolean>(true);
     const [copied, setCopied]                       = useState(false);
     const [sortMode, setSortMode]                   = useState<SortMode>("default");
+    const [availableScanners, setAvailableScanners] = useState<string[]>([]);
+    const [selectedScanners, setSelectedScanners]   = useState<string[]>([]);
 
-    const detailCacheRef   = useRef<Map<string, DetailCache>>(new Map());
-    const [contentKey, setContentKey]           = useState(0);
+    // Tổng số đơn gốc (trước filter) — dùng để hiển thị "X / Y đơn"
+    const [totalSourceCount, setTotalSourceCount]   = useState<number>(bills.length);
+
+    const detailCacheRef                    = useRef<Map<string, DetailCache>>(new Map());
+    const [contentKey, setContentKey]       = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
 
-    // ── O(1) lookup map: waybill → GroupedOrder ───────────────────────────────
+    // O(1) lookup map
     const groupedOrderMap = useMemo(() => {
         const m = new Map<string, GroupedOrder>();
         groupedOrders.forEach(o => m.set(o.waybill, o));
@@ -468,6 +373,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         });
     }, [billsList, groupedOrders, sortMode]);
 
+    const deferredList = useDeferredValue(sortedBillsList);
+
     const sortLabel = sortMode === "dispatch_asc" ? "Mã đoạn ↑"
         : sortMode === "dispatch_desc" ? "Mã đoạn ↓" : "Mặc định";
 
@@ -505,42 +412,57 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     }, [authToken]);
 
     // ── Select with transition ────────────────────────────────────────────────
+    const selectedCodeRef = useRef(selectedCode);
+    useEffect(() => { selectedCodeRef.current = selectedCode; }, [selectedCode]);
+
     const handleSelectCode = useCallback((code: string) => {
-        if (code === selectedCode) return;
+        if (code === selectedCodeRef.current) return;
         setIsTransitioning(true);
         setTimeout(() => {
             setSelectedCode(code);
             setContentKey(k => k + 1);
             setIsTransitioning(false);
         }, 120);
-    }, [selectedCode]);
+    }, []);
 
     // ── Effects ───────────────────────────────────────────────────────────────
-    useEffect(() => { setBillsList(bills); setFilteredBills(bills); }, [bills]);
+    useEffect(() => {
+        setBillsList(bills);
+        setFilteredBills(bills);
+        setTotalSourceCount(bills.length);
+    }, [bills]);
 
     useEffect(() => {
-        if (!isBillTracking && bills.length > 0) loadOrdersData();
+        if (!isBillTracking && bills.length > 0) loadOrdersData(bills);
     }, [bills, isBillTracking]);
 
     useEffect(() => {
-        if (!isBillTracking) applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08]);
+        applyStatusFilter();
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, selectedScanners]);
 
-    // ── API: load with batching + retry + progress ────────────────────────────
-    const loadOrdersData = async () => {
+    // ── API: load với batching + retry + progress ─────────────────────────────
+    const loadOrdersData = async (targetBills: string[] = bills) => {
         setIsLoadingOrders(true);
         detailCacheRef.current.clear();
 
         const startedAt = Date.now();
-        setLoadProgress({ total: bills.length, done: 0, failed: 0, startedAt });
+        setLoadProgress({ total: targetBills.length, done: 0, failed: 0, startedAt });
+
+        // Reset filter state khi load mới
+        setAvailableStatuses([]);
+        setSelectedStatuses([]);
+        setAvailableScanners([]);
+        setSelectedScanners([]);
+        setGroupedOrders([]);
+        setOrdersData([]);
 
         const mockData: OrderData[] = [];
 
         await runInBatches(
-            bills,
+            targetBills,
             async (bill) => {
                 try {
-                    const [orderResp, trackingResp]: [any, any] = await withRetry(() =>
+                    const [orderResp, trackingResp, issueResp]: [any, any, any] = await withRetry(() =>
                         Promise.all([
                             axios.post(
                                 "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
@@ -552,18 +474,22 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 { keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1" },
                                 { headers: { authToken, lang: 'VN', langType: 'VN' } }
                             ),
+                            axios.post(
+                                "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
+                                { current: 1, size: 100, waybillId: bill, countryId: "1" },
+                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                            ),
                         ])
                     );
-
-                    // Lấy trạng thái thực gần nhất — bỏ qua EXCLUDED_SCAN_TYPE
-                    const details: any[] = trackingResp.data.data[0]?.details ?? [];
-                    const { scanTypeName, scanNetworkCode } = pickValidTrackingEntry(details);
-
+                    const issueRecords: any[] = issueResp.data?.data?.records ?? [];
+                    const lastIssue           = issueRecords[0];
+                    const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
-                        scanTypeName,
-                        scanNetworkCode,
+                        scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
+                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '',
+                        lastIssueScanner,
                     });
                 } catch {
                     mockData.push({
@@ -571,12 +497,13 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         terminalDispatchCode: '',
                         scanTypeName: 'Lỗi tải dữ liệu',
                         scanNetworkCode: '',
+                        lastIssueScanner: '',
                     });
                     throw new Error("load failed after retries");
                 }
             },
             (done, failed) => {
-                setLoadProgress({ total: bills.length, done, failed, startedAt });
+                setLoadProgress({ total: targetBills.length, done, failed, startedAt });
             },
             BATCH_SIZE,
         );
@@ -585,8 +512,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const statuses = Array.from(new Set(mockData.map(o => o.scanTypeName).filter(Boolean)));
             setAvailableStatuses(statuses);
             setSelectedStatuses(statuses);
+            const scanners = Array.from(new Set(mockData.map(o => o.lastIssueScanner).filter(Boolean))).sort();
+            setAvailableScanners(scanners);
+            setSelectedScanners([]);
             setGroupedOrders(createGroupedOrders(mockData));
             setOrdersData(mockData);
+            setTotalSourceCount(targetBills.length);
+            // Auto-select đơn đầu tiên sau khi load xong
+            if (targetBills.length > 0) {
+                handleSelectCode(targetBills[0]);
+            }
         } catch (e) {
             console.error('Error processing orders data:', e);
         } finally {
@@ -607,6 +542,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const is028 = od.scanNetworkCode === '028M08';
             if (is028 && !show028M08) return false;
             if (!is028 && !showNon028M08) return false;
+            if (selectedScanners.length > 0 && !selectedScanners.includes(od.lastIssueScanner)) return false;
             return true;
         });
         const waybills = filtered.map(o => o.waybill);
@@ -645,9 +581,14 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     const handleSearch = () => {
         if (parsedCodes.length > 0) {
+            const codes = [...parsedCodes];
             detailCacheRef.current.clear();
-            setBillsList([...parsedCodes]);
-            handleSelectCode(parsedCodes[0]);
+            setBillsList(codes);
+            setFilteredBills(codes);
+            setTotalSourceCount(codes.length);
+            setSelectedCode(null);
+            setSortMode("default");
+            loadOrdersData(codes);  // gọi API + progress bar + auto-select đầu tiên
         }
     };
 
@@ -661,9 +602,11 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         detailCacheRef.current.clear();
         setSortMode("default");
         if (isBillTracking) {
-            if (billsList.length > 0) { setSelectedCode(null); setBillsList([...billsList]); }
+            // Bill tracking: reload với parsedCodes nếu có, fallback billsList
+            const target = parsedCodes.length > 0 ? parsedCodes : billsList;
+            if (target.length > 0) loadOrdersData(target);
         } else {
-            loadOrdersData();
+            loadOrdersData(bills);
         }
     };
 
@@ -678,8 +621,12 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedStatuses([...availableStatuses]);
         setShow028M08(true);
         setShowNon028M08(true);
+        setSelectedScanners([]);
         setSortMode("default");
     };
+
+    // ── Có data để show filter không ─────────────────────────────────────────
+    const hasFilterData = availableStatuses.length > 0;
 
     // ── Loading screen ────────────────────────────────────────────────────────
     if (shouldShowLoading) {
@@ -727,7 +674,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
-                                {isBillTracking ? billsList.length : `${filteredBills.length} / ${bills.length}`} đơn
+                                {hasFilterData
+                                    ? `${filteredBills.length} / ${totalSourceCount}`
+                                    : billsList.length} đơn
                             </span>
                             <button
                                 onClick={handleRefresh}
@@ -741,19 +690,21 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                     </div>
                 </div>
 
-                {/* ── Progress bar (chỉ hiện khi đang tải) ── */}
-                {!isBillTracking && loadProgress && (
+                {/* ── Progress bar ── */}
+                {loadProgress && (
                     <LoadProgressBar progress={loadProgress} />
                 )}
 
-                {/* ── Filter bar ── */}
-                {!isBillTracking && (
+                {/* ── Filter bar — hiện khi có data, cho cả 2 chế độ ── */}
+                {hasFilterData && (
                     <div className="bg-white border-b border-slate-200 px-5 py-3 flex-shrink-0">
                         <div className="flex flex-wrap items-center gap-3">
                             <div className="flex items-center gap-2">
                                 <Filter className="w-3.5 h-3.5 text-slate-400" />
                                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Bộ lọc</span>
                             </div>
+
+                            {/* Trạng thái */}
                             <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
                                 <input
                                     type="checkbox"
@@ -774,7 +725,10 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     <span className="text-slate-700">{status}</span>
                                 </label>
                             ))}
+
                             <div className="h-5 w-px bg-slate-200" />
+
+                            {/* Mã mạng lưới */}
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
                             <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
                                 <input type="checkbox" checked={show028M08} onChange={e => setShow028M08(e.target.checked)}
@@ -786,6 +740,39 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                                 <span className="text-slate-700">Khác</span>
                             </label>
+
+                            {/* Người quét vấn đề */}
+                            {availableScanners.length > 0 && (<>
+                                <div className="h-5 w-px bg-slate-200" />
+                                <div className="flex items-center gap-1.5">
+                                    <User className="w-3.5 h-3.5 text-slate-400" />
+                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Người quét vấn đề</span>
+                                </div>
+                                <select
+                                    value={selectedScanners[0] ?? ""}
+                                    onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
+                                    className={`text-xs font-semibold border rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/40 transition-all cursor-pointer ${
+                                        selectedScanners.length > 0
+                                            ? 'bg-amber-50 border-amber-300 text-amber-800'
+                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-300'
+                                    }`}
+                                >
+                                    <option value="">Tất cả ({availableScanners.length} người)</option>
+                                    {availableScanners.map(name => (
+                                        <option key={name} value={name}>{name}</option>
+                                    ))}
+                                </select>
+                                {selectedScanners.length > 0 && (
+                                    <button
+                                        onClick={() => setSelectedScanners([])}
+                                        className="text-amber-500 hover:text-amber-700 transition-colors"
+                                        title="Bỏ lọc"
+                                    >
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
+                            </>)}
+
                             <button onClick={clearFilters}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
                                 <RotateCcw className="w-3 h-3" />Reset
@@ -833,11 +820,13 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 )}
                                 <button
                                     onClick={e => { e.stopPropagation(); handleSearch(); }}
-                                    disabled={parsedCodes.length === 0}
+                                    disabled={parsedCodes.length === 0 || isLoadingOrders}
                                     className="w-full mt-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm"
                                 >
-                                    <Search className="w-4 h-4" />
-                                    Tra cứu ({parsedCodes.length})
+                                    {isLoadingOrders
+                                        ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Đang tải...</>
+                                        : <><Search className="w-4 h-4" />Tra cứu ({parsedCodes.length})</>
+                                    }
                                 </button>
                             </div>
                         )}
@@ -852,7 +841,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     )}
                                 </span>
                                 <div className="flex items-center gap-1.5">
-                                    {!isBillTracking && groupedOrders.length > 0 && (
+                                    {hasFilterData && (
                                         <button
                                             onClick={e => { e.stopPropagation(); cycleSortMode(); }}
                                             title="Sắp xếp theo mã đoạn"
@@ -884,14 +873,36 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 </div>
                             </div>
 
-                            <VirtualList
-                                items={sortedBillsList}
-                                isBillTracking={isBillTracking}
-                                selectedCode={selectedCode}
-                                groupedOrderMap={groupedOrderMap}
-                                onSelect={(code) => { handleSelectCode(code); setIsSearchExpanded(false); }}
-                                onHover={prefetchDetail}
-                            />
+                            <SelectedCodeCtx.Provider value={selectedCode}>
+                                <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-1.5">
+                                    {deferredList.length === 0 ? (
+                                        <div className="text-center py-10">
+                                            <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                                            <p className="text-sm font-semibold text-slate-400">
+                                                {isLoadingOrders
+                                                    ? "Đang tải dữ liệu..."
+                                                    : isBillTracking
+                                                        ? "Nhập mã vận đơn để bắt đầu"
+                                                        : "Chưa có vận đơn"}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        deferredList.map(code => {
+                                            const groupedOrder = groupedOrderMap.get(code);
+                                            return (
+                                                <BillItem
+                                                    key={code}
+                                                    code={code}
+                                                    groupColor={groupedOrder?.groupColor ?? ''}
+                                                    terminalDispatchCode={groupedOrder?.terminalDispatchCode ?? ''}
+                                                    onSelect={handleSelectCode}
+                                                    onHover={prefetchDetail}
+                                                />
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </SelectedCodeCtx.Provider>
                         </div>
                     </div>
 
@@ -903,8 +914,12 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                                         <Package className="w-8 h-8 text-slate-300" />
                                     </div>
-                                    <p className="font-bold text-slate-500">Chọn một mã vận đơn để xem chi tiết</p>
-                                    {sortedBillsList.length > 0 && (
+                                    <p className="font-bold text-slate-500">
+                                        {isLoadingOrders
+                                            ? "Đang tải dữ liệu..."
+                                            : "Chọn một mã vận đơn để xem chi tiết"}
+                                    </p>
+                                    {!isLoadingOrders && sortedBillsList.length > 0 && (
                                         <p className="text-xs text-slate-400 mt-1">Có {sortedBillsList.length} vận đơn trong danh sách</p>
                                     )}
                                 </div>
