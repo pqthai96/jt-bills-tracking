@@ -783,41 +783,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                             <div className="h-5 w-px bg-slate-200" />
 
-                            {/* Loại đơn hàng */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Loại đơn</span>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-orange-300 cursor-pointer transition-all text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={showTraditional}
-                                    onChange={e => setShowTraditional(e.target.checked)}
-                                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-400"
-                                />
-                                <span className="font-semibold text-orange-700">TRUYỀN THỐNG</span>
-                                {orderTypeCounts.traditional > 0 && (
-                                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                                        {orderTypeCounts.traditional}
-                                    </span>
-                                )}
-                            </label>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-violet-300 cursor-pointer transition-all text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={showEcommerce}
-                                    onChange={e => setShowEcommerce(e.target.checked)}
-                                    className="rounded border-slate-300 text-violet-500 focus:ring-violet-400"
-                                />
-                                <span className="font-semibold text-violet-700">ĐƠN SÀN</span>
-                                {orderTypeCounts.ecommerce > 0 && (
-                                    <span className="bg-violet-100 text-violet-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                                        {orderTypeCounts.ecommerce}
-                                    </span>
-                                )}
-                            </label>
-                        </div>
-
-                        {/* Hàng 2: Mã mạng lưới + Mã đoạn + Chuyển hoàn + Người quét + Reset */}
-                        <div className="flex flex-wrap items-center gap-2.5">
-
                             {/* Mã mạng lưới */}
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
                             <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
@@ -830,8 +795,10 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                                 <span className="text-slate-700">Khác</span>
                             </label>
+                        </div>
 
-                            <div className="h-5 w-px bg-slate-200" />
+                        {/* Hàng 2: Mã mạng lưới + Mã đoạn + Chuyển hoàn + Người quét + Reset */}
+                        <div className="flex flex-wrap items-center gap-2.5">
 
                             {/* Mã đoạn */}
                             {availableDispatchCodes.length > 0 && (<>
@@ -865,31 +832,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 <div className="h-5 w-px bg-slate-200" />
                             </>)}
 
-                            {/* Chuyển hoàn */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
-                            <div className="flex items-center gap-1.5">
-                                {([
-                                    { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                                    { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
-                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
-                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
-                                    <button
-                                        key={String(opt.value)}
-                                        onClick={() => setReturnTransferFilter(opt.value)}
-                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                                            returnTransferFilter === opt.value
-                                                ? opt.active
-                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
-                                        }`}
-                                    >
-                                        {opt.label}
-                                    </button>
-                                ))}
-                            </div>
-
                             {/* Người quét vấn đề */}
                             {availableScanners.length > 0 && (<>
-                                <div className="h-5 w-px bg-slate-200" />
                                 <div className="flex items-center gap-1.5">
                                     <User className="w-3.5 h-3.5 text-slate-400" />
                                     <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Người quét vấn đề</span>
@@ -918,6 +862,65 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     </button>
                                 )}
                             </>)}
+
+                            {/* Loại đơn hàng */}
+                            <div className="h-5 w-px bg-slate-200" />
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Loại đơn</span>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-orange-300 cursor-pointer transition-all text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={showTraditional}
+                                    onChange={e => setShowTraditional(e.target.checked)}
+                                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-400"
+                                />
+                                <span className="font-semibold text-orange-700">TRUYỀN THỐNG</span>
+                                {orderTypeCounts.traditional > 0 && (
+                                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                                        {orderTypeCounts.traditional}
+                                    </span>
+                                )}
+                            </label>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-violet-300 cursor-pointer transition-all text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={showEcommerce}
+                                    onChange={e => setShowEcommerce(e.target.checked)}
+                                    className="rounded border-slate-300 text-violet-500 focus:ring-violet-400"
+                                />
+                                <span className="font-semibold text-violet-700">ĐƠN SÀN</span>
+                                {orderTypeCounts.ecommerce > 0 && (
+                                    <span className="bg-violet-100 text-violet-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                                        {orderTypeCounts.ecommerce}
+                                    </span>
+                                )}
+                            </label>
+
+
+                            <div className="h-5 w-px bg-slate-200" />
+
+                            {/* Chuyển hoàn */}
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
+                            <div className="flex items-center gap-1.5">
+                                {([
+                                    { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                                    { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
+                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
+                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                                    <button
+                                        key={String(opt.value)}
+                                        onClick={() => setReturnTransferFilter(opt.value)}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                            returnTransferFilter === opt.value
+                                                ? opt.active
+                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+
+
 
                             <button onClick={clearFilters}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
