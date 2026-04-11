@@ -59,6 +59,7 @@ interface OrderData {
     scanTypeName: string;
     scanNetworkCode: string;
     lastIssueScanner: string;
+    hasReturnTransfer: boolean;
 }
 
 interface GroupedOrder {
@@ -161,8 +162,8 @@ function isTraditionalOrder(waybill: string): boolean {
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 function LoadProgressBar({ progress }: { progress: LoadProgress }) {
-    const pct     = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
-    const elapsed = (Date.now() - progress.startedAt) / 1000;
+    const pct      = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+    const elapsed  = (Date.now() - progress.startedAt) / 1000;
     const rate     = progress.done > 0 ? progress.done / elapsed : 0;
     const remaining = progress.total - progress.done;
     const etaSec   = rate > 0 ? remaining / rate : Infinity;
@@ -266,22 +267,29 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     const [loadProgress, setLoadProgress]         = useState<LoadProgress | null>(null);
 
-    const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
-    const [selectedStatuses, setSelectedStatuses]   = useState<string[]>([]);
-    const [show028M08, setShow028M08]               = useState<boolean>(true);
-    const [showNon028M08, setShowNon028M08]         = useState<boolean>(true);
-    const [showTraditional, setShowTraditional]     = useState<boolean>(true);
-    const [showEcommerce, setShowEcommerce]         = useState<boolean>(true);
-    const [copied, setCopied]                       = useState(false);
-    const [sortMode, setSortMode]                   = useState<SortMode>("default");
-    const [availableScanners, setAvailableScanners] = useState<string[]>([]);
-    const [selectedScanners, setSelectedScanners]   = useState<string[]>([]);
+    const [availableStatuses, setAvailableStatuses]   = useState<string[]>([]);
+    const [selectedStatuses, setSelectedStatuses]     = useState<string[]>([]);
+    const [show028M08, setShow028M08]                 = useState<boolean>(true);
+    const [showNon028M08, setShowNon028M08]           = useState<boolean>(true);
+    const [showTraditional, setShowTraditional]       = useState<boolean>(true);
+    const [showEcommerce, setShowEcommerce]           = useState<boolean>(true);
+    const [copied, setCopied]                         = useState(false);
+    const [sortMode, setSortMode]                     = useState<SortMode>("default");
+
+    const [availableScanners, setAvailableScanners]   = useState<string[]>([]);
+    const [selectedScanners, setSelectedScanners]     = useState<string[]>([]);
+
+    const [availableDispatchCodes, setAvailableDispatchCodes] = useState<string[]>([]);
+    const [selectedDispatchCode, setSelectedDispatchCode]     = useState<string>("");
+
+    // null = tất cả, true = đã chuyển hoàn, false = chưa chuyển hoàn
+    const [returnTransferFilter, setReturnTransferFilter] = useState<boolean | null>(null);
 
     // Tổng số đơn gốc (trước filter) — dùng để hiển thị "X / Y đơn"
-    const [totalSourceCount, setTotalSourceCount]   = useState<number>(bills.length);
+    const [totalSourceCount, setTotalSourceCount] = useState<number>(bills.length);
 
-    const detailCacheRef                    = useRef<Map<string, DetailCache>>(new Map());
-    const [contentKey, setContentKey]       = useState(0);
+    const detailCacheRef                        = useRef<Map<string, DetailCache>>(new Map());
+    const [contentKey, setContentKey]           = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
@@ -446,7 +454,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     useEffect(() => {
         applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners]);
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
     const loadOrdersData = async (targetBills: string[] = bills) => {
@@ -461,6 +469,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedStatuses([]);
         setAvailableScanners([]);
         setSelectedScanners([]);
+        setAvailableDispatchCodes([]);
+        setSelectedDispatchCode("");
+        setReturnTransferFilter(null);
         setGroupedOrders([]);
         setOrdersData([]);
         setShowTraditional(true);
@@ -494,12 +505,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
                     const lastIssue           = issueRecords[0];
                     const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
+                    const allScanTypes: string[] = (trackingResp.data?.data?.[0]?.details ?? [])
+                        .map((d: any) => d.scanTypeName || '');
+                    const hasReturnTransfer = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
                         scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
                         scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '',
                         lastIssueScanner,
+                        hasReturnTransfer,
                     });
                 } catch {
                     mockData.push({
@@ -508,6 +523,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         scanTypeName: 'Lỗi tải dữ liệu',
                         scanNetworkCode: '',
                         lastIssueScanner: '',
+                        hasReturnTransfer: false,
                     });
                     throw new Error("load failed after retries");
                 }
@@ -522,12 +538,21 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const statuses = Array.from(new Set(mockData.map(o => o.scanTypeName).filter(Boolean)));
             setAvailableStatuses(statuses);
             setSelectedStatuses(statuses);
+
             const scanners = Array.from(new Set(mockData.map(o => o.lastIssueScanner).filter(Boolean))).sort();
             setAvailableScanners(scanners);
             setSelectedScanners([]);
+
+            const dispatchCodes = Array.from(
+                new Set(mockData.map(o => o.terminalDispatchCode).filter(Boolean))
+            ).sort();
+            setAvailableDispatchCodes(dispatchCodes);
+            setSelectedDispatchCode("");
+
             setGroupedOrders(createGroupedOrders(mockData));
             setOrdersData(mockData);
             setTotalSourceCount(targetBills.length);
+
             // Auto-select đơn đầu tiên sau khi load xong
             if (targetBills.length > 0) {
                 handleSelectCode(targetBills[0]);
@@ -556,6 +581,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             if (isTraditional && !showTraditional) return false;
             if (!isTraditional && !showEcommerce) return false;
             if (selectedScanners.length > 0 && !selectedScanners.includes(od.lastIssueScanner)) return false;
+            if (selectedDispatchCode && od.terminalDispatchCode !== selectedDispatchCode) return false;
+            if (returnTransferFilter !== null && od.hasReturnTransfer !== returnTransferFilter) return false;
             return true;
         });
         const waybills = filtered.map(o => o.waybill);
@@ -601,7 +628,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             setTotalSourceCount(codes.length);
             setSelectedCode(null);
             setSortMode("default");
-            loadOrdersData(codes);  // gọi API + progress bar + auto-select đầu tiên
+            loadOrdersData(codes);
         }
     };
 
@@ -615,7 +642,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         detailCacheRef.current.clear();
         setSortMode("default");
         if (isBillTracking) {
-            // Bill tracking: reload với parsedCodes nếu có, fallback billsList
             const target = parsedCodes.length > 0 ? parsedCodes : billsList;
             if (target.length > 0) loadOrdersData(target);
         } else {
@@ -637,6 +663,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setShowTraditional(true);
         setShowEcommerce(true);
         setSelectedScanners([]);
+        setSelectedDispatchCode("");
+        setReturnTransferFilter(null);
         setSortMode("default");
     };
 
@@ -718,7 +746,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                     <LoadProgressBar progress={loadProgress} />
                 )}
 
-                {/* ── Filter bar — hiện khi có data, cho cả 2 chế độ ── */}
+                {/* ── Filter bar ── */}
                 {hasFilterData && (
                     <div className="bg-white border-b border-slate-200 px-5 py-3 flex-shrink-0">
                         <div className="flex flex-wrap items-center gap-3">
@@ -796,6 +824,61 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     </span>
                                 )}
                             </label>
+
+                            {/* Mã đoạn */}
+                            {availableDispatchCodes.length > 0 && (<>
+                                <div className="h-5 w-px bg-slate-200" />
+                                <div className="flex items-center gap-1.5">
+                                    <Truck className="w-3.5 h-3.5 text-slate-400" />
+                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã đoạn</span>
+                                </div>
+                                <select
+                                    value={selectedDispatchCode}
+                                    onChange={e => setSelectedDispatchCode(e.target.value)}
+                                    className={`text-xs font-semibold border rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/40 transition-all cursor-pointer ${
+                                        selectedDispatchCode
+                                            ? 'bg-blue-50 border-blue-300 text-blue-800'
+                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-300'
+                                    }`}
+                                >
+                                    <option value="">Tất cả ({availableDispatchCodes.length} mã)</option>
+                                    {availableDispatchCodes.map(code => (
+                                        <option key={code} value={code}>{code}</option>
+                                    ))}
+                                </select>
+                                {selectedDispatchCode && (
+                                    <button
+                                        onClick={() => setSelectedDispatchCode("")}
+                                        className="text-blue-500 hover:text-blue-700 transition-colors"
+                                        title="Bỏ lọc"
+                                    >
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
+                            </>)}
+
+                            {/* Chuyển hoàn */}
+                            <div className="h-5 w-px bg-slate-200" />
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
+                            <div className="flex items-center gap-1.5">
+                                {([
+                                    { value: null,  label: 'Tất cả',        active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                                    { value: true,  label: 'Đã chuyển hoàn', active: 'bg-rose-50 border-rose-400 text-rose-700' },
+                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
+                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                                    <button
+                                        key={String(opt.value)}
+                                        onClick={() => setReturnTransferFilter(opt.value)}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                            returnTransferFilter === opt.value
+                                                ? opt.active
+                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
 
                             {/* Người quét vấn đề */}
                             {availableScanners.length > 0 && (<>
