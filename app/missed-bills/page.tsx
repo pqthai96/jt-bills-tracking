@@ -50,7 +50,7 @@ function Page() {
 
         // Gọi các API song song
         const apiCalls = [
-            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_total", {
+            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_total_db", {
                 "current": 1,
                 "size": 20,
                 "scansitecode": "028M08",
@@ -67,7 +67,7 @@ function Page() {
                 }
             }),
 
-            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_update_time", {
+            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_update_time_db", {
                 "current": 1,
                 "size": 20,
                 "scansitecode": "028M08",
@@ -84,7 +84,7 @@ function Page() {
                 }
             }),
 
-            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_sum", {
+            axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_sum_db", {
                 "current": 1,
                 "size": 20,
                 "scansitecode": "028M08",
@@ -124,7 +124,7 @@ function Page() {
 
         const {startTime, endTime} = getCurrentDateRange();
 
-        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_detail", {
+        axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_detail_db", {
             "current": 1,
             "size": arrivalMissNum,
             "startTime": startTime,
