@@ -505,14 +505,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
                     const lastIssue           = issueRecords[0];
                     const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
-                    const allScanTypes: string[] = (trackingResp.data?.data?.[0]?.details ?? [])
-                        .map((d: any) => d.scanTypeName || '');
+                    const allDetails: any[] = trackingResp.data?.data?.[0]?.details ?? [];
+                    const allScanTypes: string[] = allDetails.map((d: any) => d.scanTypeName || '');
                     const hasReturnTransfer = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
+                    const IGNORED_STATUSES = ['Lịch sử cuộc gọi-phát'];
+                    const realDetail = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
-                        scanTypeName: trackingResp.data.data[0]?.details[0]?.scanTypeName || 'Không có trạng thái',
-                        scanNetworkCode: trackingResp.data.data[0]?.details[0]?.scanNetworkCode || '',
+                        scanTypeName: realDetail?.scanTypeName || 'Không có trạng thái',
+                        scanNetworkCode: realDetail?.scanNetworkCode || '',
                         lastIssueScanner,
                         hasReturnTransfer,
                     });
@@ -748,8 +750,10 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                 {/* ── Filter bar ── */}
                 {hasFilterData && (
-                    <div className="bg-white border-b border-slate-200 px-5 py-3 flex-shrink-0">
-                        <div className="flex flex-wrap items-center gap-3">
+                    <div className="bg-white border-b border-slate-200 px-5 py-2.5 flex-shrink-0 flex flex-col gap-2">
+
+                        {/* Hàng 1: Trạng thái + Loại đơn */}
+                        <div className="flex flex-wrap items-center gap-2.5">
                             <div className="flex items-center gap-2">
                                 <Filter className="w-3.5 h-3.5 text-slate-400" />
                                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Bộ lọc</span>
@@ -776,21 +780,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     <span className="text-slate-700">{status}</span>
                                 </label>
                             ))}
-
-                            <div className="h-5 w-px bg-slate-200" />
-
-                            {/* Mã mạng lưới */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                <input type="checkbox" checked={show028M08} onChange={e => setShow028M08(e.target.checked)}
-                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                                <span className="font-semibold text-slate-700">028M08</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                <input type="checkbox" checked={showNon028M08} onChange={e => setShowNon028M08(e.target.checked)}
-                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                                <span className="text-slate-700">Khác</span>
-                            </label>
 
                             <div className="h-5 w-px bg-slate-200" />
 
@@ -824,10 +813,29 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                     </span>
                                 )}
                             </label>
+                        </div>
+
+                        {/* Hàng 2: Mã mạng lưới + Mã đoạn + Chuyển hoàn + Người quét + Reset */}
+                        <div className="flex flex-wrap items-center gap-2.5">
+                            <div className="w-px opacity-0 pointer-events-none" style={{ width: '71px' }} />
+
+                            {/* Mã mạng lưới */}
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                <input type="checkbox" checked={show028M08} onChange={e => setShow028M08(e.target.checked)}
+                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                <span className="font-semibold text-slate-700">028M08</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
+                                <input type="checkbox" checked={showNon028M08} onChange={e => setShowNon028M08(e.target.checked)}
+                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                <span className="text-slate-700">Khác</span>
+                            </label>
+
+                            <div className="h-5 w-px bg-slate-200" />
 
                             {/* Mã đoạn */}
                             {availableDispatchCodes.length > 0 && (<>
-                                <div className="h-5 w-px bg-slate-200" />
                                 <div className="flex items-center gap-1.5">
                                     <Truck className="w-3.5 h-3.5 text-slate-400" />
                                     <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã đoạn</span>
@@ -855,15 +863,15 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                         <X className="w-3.5 h-3.5" />
                                     </button>
                                 )}
+                                <div className="h-5 w-px bg-slate-200" />
                             </>)}
 
                             {/* Chuyển hoàn */}
-                            <div className="h-5 w-px bg-slate-200" />
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
                             <div className="flex items-center gap-1.5">
                                 {([
-                                    { value: null,  label: 'Tất cả',        active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                                    { value: true,  label: 'Đã chuyển hoàn', active: 'bg-rose-50 border-rose-400 text-rose-700' },
+                                    { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                                    { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
                                     { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
                                 ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
                                     <button
@@ -917,6 +925,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 <RotateCcw className="w-3 h-3" />Reset
                             </button>
                         </div>
+
                     </div>
                 )}
 
