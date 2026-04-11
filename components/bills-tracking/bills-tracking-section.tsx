@@ -817,7 +817,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                         {/* Hàng 2: Mã mạng lưới + Mã đoạn + Chuyển hoàn + Người quét + Reset */}
                         <div className="flex flex-wrap items-center gap-2.5">
-                            <div className="w-px opacity-0 pointer-events-none" style={{ width: '71px' }} />
 
                             {/* Mã mạng lưới */}
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
