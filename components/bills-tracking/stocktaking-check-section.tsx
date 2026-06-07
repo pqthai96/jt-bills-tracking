@@ -7,7 +7,7 @@ import axios from "axios";
 import {
     Search, Package, Filter, RotateCcw, ArrowLeft,
     Warehouse, CheckCircle2, XCircle, Clock,
-    RefreshCw, AlertTriangle, BadgeCheck, Copy, Check,
+    RefreshCw, Copy, Check,
     CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, User, X,
 } from "lucide-react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
@@ -77,10 +77,11 @@ interface BillInfo {
     latestScanNetworkCode: string;
     stocktakingTime: string;
     stocktakingNetworkCode: string;
-    lastIssueScanner: string; // người "Quét kiện vấn đề" gần nhất
+    lastIssueScanner: string;
+    hasReturnTransfer: boolean;   // Đang chuyển hoàn (đã duyệt)
+    hasReturnRegistered: boolean; // Đăng ký chuyển hoàn (chưa duyệt)
 }
 
-// ─── Progress state ───────────────────────────────────────────────────────────
 interface LoadProgress {
     total: number;
     done: number;
@@ -191,8 +192,7 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
     );
 }
 
-// ─── Memoized list item ───────────────────────────────────────────────────────
-// Dùng Context thay vì prop isSelected → chỉ 2 item re-render mỗi lần đổi selection
+// ─── Context & memoized list item ─────────────────────────────────────────────
 const SelectedWaybillCtx = React.createContext<string | null>(null);
 
 const StocktakingItem = memo(function StocktakingItem({
@@ -277,7 +277,12 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     const [selectedLastStatuses, setSelectedLastStatuses] = useState<string[]>([]);
     const [searchQuery, setSearchQuery]                   = useState("");
     const [availableScanners, setAvailableScanners]       = useState<string[]>([]);
-    const [selectedScanners, setSelectedScanners]         = useState<string[]>([]); // [] = tất cả
+    const [selectedScanners, setSelectedScanners]         = useState<string[]>([]);
+
+    // null = tất cả, true = đã chuyển hoàn, false = chưa
+    const [returnTransferFilter, setReturnTransferFilter]     = useState<boolean | null>(null);
+    // null = tất cả, true = đã đăng ký hoàn, false = chưa
+    const [returnRegisteredFilter, setReturnRegisteredFilter] = useState<boolean | null>(null);
 
     // ── Cache & transition ─────────────────────────────────────────────────────
     const detailCacheRef                        = useRef<Map<string, DetailCache>>(new Map());
@@ -314,10 +319,11 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             selectedLastStatuses.length < allLastStatuses.length &&
             !selectedLastStatuses.includes(b.latestScanTypeName)
         ) return false;
-        // Lọc theo người quét kiện vấn đề
         if (selectedScanners.length > 0 && !selectedScanners.includes(b.lastIssueScanner)) return false;
+        if (returnTransferFilter !== null && b.hasReturnTransfer !== returnTransferFilter) return false;
+        if (returnRegisteredFilter !== null && b.hasReturnRegistered !== returnRegisteredFilter) return false;
         return true;
-    }), [billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses, selectedScanners]);
+    }), [billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses, selectedScanners, returnTransferFilter, returnRegisteredFilter]);
 
     const filtered = useMemo(() => {
         if (sortMode === "default") return baseFiltered;
@@ -351,7 +357,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         });
     }, [baseFiltered, sortMode]);
 
-    // useDeferredValue: list render priority thấp → UI luôn responsive
     const deferredFiltered = useDeferredValue(filtered);
 
     const checkedCount    = billsInfo.filter(b => b.stocktakingStatus === "checked").length;
@@ -377,12 +382,14 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         const startedAt = Date.now();
         setLoadProgress({ total: bills.length, done: 0, failed: 0, startedAt });
 
-        // Init placeholder "loading" cho từng đơn
         setBillsInfo(bills.map(w => ({
             waybill: w, terminalDispatchCode: '', groupLevel1: '', groupLevel2: '', groupColor: '',
             stocktakingStatus: "loading",
             latestScanTypeName: "", latestScanTime: "", latestScanNetworkCode: "",
-            stocktakingTime: "", stocktakingNetworkCode: "", lastIssueScanner: "",
+            stocktakingTime: "", stocktakingNetworkCode: "",
+            lastIssueScanner: "",
+            hasReturnTransfer: false,
+            hasReturnRegistered: false,
         })));
 
         const dateStart = `${selectedDate} 00:00:00`;
@@ -415,6 +422,7 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
                     const terminalDispatchCode = orderResp.data?.data?.details?.terminalDispatchCode || '';
                     const details: any[]       = trackingResp.data?.data?.[0]?.details || [];
+                    const allScanTypes: string[] = details.map((d: any) => d.scanTypeName || '');
 
                     // Kiểm tra kiểm tồn trong ngày được chọn
                     const todayStocktaking = details.find(d =>
@@ -424,12 +432,17 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     // Trạng thái thực gần nhất (bỏ qua cuộc gọi-phát)
                     const { scanTypeName, scanNetworkCode, scanTime } = pickValidTrackingEntry(details);
 
+                    // Đang chuyển hoàn = đã duyệt hoàn
+                    const hasReturnTransfer   = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
+                    // Đăng ký chuyển hoàn = mới đăng ký, chưa duyệt
+                    const hasReturnRegistered = allScanTypes.some(s => s.includes('Đăng ký chuyển hoàn'));
+
                     // Người quét kiện vấn đề gần nhất
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
-                    const lastIssue = issueRecords[0];
-                    const lastIssueScanner = lastIssue?.operatorName || lastIssue?.scanUserName || '';
+                    const lastIssue           = issueRecords[0];
+                    const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
 
-                    // Pre-cache để click vào không cần fetch lại
+                    // Pre-cache để click không cần fetch lại (sẽ bị xóa khi click → fetch fresh)
                     detailCacheRef.current.set(waybill, {
                         orderDetail: orderResp.data?.data?.details ?? null,
                         podHistory: [...details].reverse(),
@@ -446,6 +459,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         stocktakingTime:        todayStocktaking?.scanTime        || "",
                         stocktakingNetworkCode: todayStocktaking?.scanNetworkCode || "",
                         lastIssueScanner,
+                        hasReturnTransfer,
+                        hasReturnRegistered,
                     });
                 } catch {
                     rawResults.push({
@@ -456,6 +471,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         latestScanTime: "", latestScanNetworkCode: "",
                         stocktakingTime: "", stocktakingNetworkCode: "",
                         lastIssueScanner: "",
+                        hasReturnTransfer: false,
+                        hasReturnRegistered: false,
                     });
                     throw new Error("load failed");
                 }
@@ -473,48 +490,57 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             return { ...r, groupLevel1: level1, groupLevel2: level2, groupColor: colorMap.get(`${level1}-${level2}`) || 'bg-slate-50 border-slate-200' };
         });
 
-        // Build danh sách người quét kiện vấn đề
         const scanners = Array.from(new Set(results.map(r => r.lastIssueScanner).filter(Boolean))).sort();
         setAvailableScanners(scanners);
         setSelectedScanners([]);
 
-        setBillsInfo(results);
+        // Reset các filter hoàn khi load lại
+        setReturnTransferFilter(null);
+        setReturnRegisteredFilter(null);
 
+        setBillsInfo(results);
         setTimeout(() => { setLoadProgress(null); setIsLoading(false); }, 1200);
     };
 
-    // ── Select waybill — stable callback, dùng ref cho selectedWaybill ────────
+    // ── Select waybill — xóa cache cũ, fetch fresh rồi mới render ────────────
     const selectedWaybillRef = useRef(selectedWaybill);
     useEffect(() => { selectedWaybillRef.current = selectedWaybill; }, [selectedWaybill]);
 
     const handleSelectWaybill = useCallback(async (waybill: string) => {
         if (waybill === selectedWaybillRef.current) return;
         setIsTransitioning(true);
-        // Nếu cache thiếu issueHistory thì fetch thêm
-        const existing = detailCacheRef.current.get(waybill);
-        if (!existing || !existing.issueHistory) {
-            try {
-                const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
-                    axios.post("https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
-                        { waybillNo: waybill, countryId: "1" }, { headers: { authToken, lang: 'VN', langType: 'VN' } }),
-                    axios.post("https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
-                        { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" }, { headers: { authToken, lang: 'VN', langType: 'VN' } }),
-                    axios.post("https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
-                        { current: 1, size: 100, waybillId: waybill, countryId: "1" }, { headers: { authToken, lang: 'VN', langType: 'VN' } }),
-                ]);
-                detailCacheRef.current.set(waybill, {
-                    orderDetail: orderResp.data?.data?.details ?? {},
-                    podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
-                    issueHistory: issueResp.data?.data?.records ?? [],
-                });
-            } catch { }
-        }
+        // Xóa cache cũ → luôn fetch dữ liệu mới nhất
+        detailCacheRef.current.delete(waybill);
+        try {
+            const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
+                    { waybillNo: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
+                    { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+                axios.post(
+                    "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
+                    { current: 1, size: 100, waybillId: waybill, countryId: "1" },
+                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                ),
+            ]);
+            detailCacheRef.current.set(waybill, {
+                orderDetail: orderResp.data?.data?.details ?? {},
+                podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
+                issueHistory: issueResp.data?.data?.records ?? [],
+            });
+        } catch { }
         setSelectedWaybill(waybill);
         setContentKey(k => k + 1);
         setIsTransitioning(false);
     }, [authToken]);
 
-    // ── Prefetch khi hover ─────────────────────────────────────────────────────
+    // ── Prefetch khi hover (không xóa cache, chỉ bổ sung nếu thiếu) ──────────
     const prefetchIssue = useCallback(async (waybill: string) => {
         const existing = detailCacheRef.current.get(waybill);
         if (existing?.issueHistory && existing.issueHistory.length !== 0) return;
@@ -550,6 +576,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         setSelectedLastStatuses([...allLastStatuses]);
         setSearchQuery("");
         setSelectedScanners([]);
+        setReturnTransferFilter(null);
+        setReturnRegisteredFilter(null);
         setSortMode("default");
     };
 
@@ -705,6 +733,54 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         )}
                     </>)}
 
+                    <div className="h-5 w-px bg-slate-200" />
+
+                    {/* Chuyển hoàn (đã duyệt) */}
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
+                    <div className="flex items-center gap-1.5">
+                        {([
+                            { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                            { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
+                            { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
+                        ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                            <button
+                                key={String(opt.value)}
+                                onClick={() => setReturnTransferFilter(opt.value)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                    returnTransferFilter === opt.value
+                                        ? opt.active
+                                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                }`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="h-5 w-px bg-slate-200" />
+
+                    {/* Đăng ký hoàn (chưa duyệt) */}
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Đăng ký chuyển hoàn</span>
+                    <div className="flex items-center gap-1.5">
+                        {([
+                            { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                            { value: true,  label: 'Đã ĐKCH',   active: 'bg-orange-50 border-orange-400 text-orange-700' },
+                            { value: false, label: 'Chưa ĐKCH', active: 'bg-sky-50 border-sky-400 text-sky-700' },
+                        ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                            <button
+                                key={String(opt.value)}
+                                onClick={() => setReturnRegisteredFilter(opt.value)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                    returnRegisteredFilter === opt.value
+                                        ? opt.active
+                                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                }`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
+                    </div>
+
                     <button onClick={clearFilters}
                             className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
                         <RotateCcw className="w-3 h-3" />Reset
@@ -716,8 +792,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
                     {/* ── Sidebar ── */}
                     <div className="w-72 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
-
-                        {/* Sidebar header */}
                         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0 gap-2">
                             <span className="font-bold text-slate-700 text-xs flex items-center gap-1.5">
                                 Danh sách
@@ -727,7 +801,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 <span className="text-slate-400 font-normal">({filtered.length})</span>
                             </span>
                             <div className="flex items-center gap-1.5">
-                                {/* Sort */}
                                 <button onClick={cycleSortMode} title="Sắp xếp theo mã đoạn"
                                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
                                             sortMode !== "default"
@@ -736,7 +809,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                         }`}>
                                     <ArrowUpDown className="w-3 h-3" />{sortLabel}
                                 </button>
-                                {/* Copy */}
                                 <button onClick={handleCopyFiltered} disabled={filtered.length === 0}
                                         title="Copy mã vận đơn"
                                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -749,7 +821,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                             </div>
                         </div>
 
-                        {/* Bills list — memoized items, context-based selection, deferred render */}
                         <SelectedWaybillCtx.Provider value={selectedWaybill}>
                             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5">
                                 {deferredFiltered.length === 0 ? (

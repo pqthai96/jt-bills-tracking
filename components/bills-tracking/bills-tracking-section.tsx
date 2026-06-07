@@ -60,6 +60,7 @@ interface OrderData {
     scanNetworkCode: string;
     lastIssueScanner: string;
     hasReturnTransfer: boolean;
+    hasReturnRegistered: boolean;
 }
 
 interface GroupedOrder {
@@ -283,7 +284,10 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const [selectedDispatchCode, setSelectedDispatchCode]     = useState<string>("");
 
     // null = tất cả, true = đã chuyển hoàn, false = chưa chuyển hoàn
-    const [returnTransferFilter, setReturnTransferFilter] = useState<boolean | null>(null);
+    const [returnTransferFilter, setReturnTransferFilter]     = useState<boolean | null>(null);
+
+    // null = tất cả, true = đã đăng ký hoàn, false = chưa đăng ký hoàn
+    const [returnRegisteredFilter, setReturnRegisteredFilter] = useState<boolean | null>(null);
 
     // Tổng số đơn gốc (trước filter) — dùng để hiển thị "X / Y đơn"
     const [totalSourceCount, setTotalSourceCount] = useState<number>(bills.length);
@@ -431,15 +435,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const selectedCodeRef = useRef(selectedCode);
     useEffect(() => { selectedCodeRef.current = selectedCode; }, [selectedCode]);
 
-    const handleSelectCode = useCallback((code: string) => {
+    const handleSelectCode = useCallback(async (code: string) => {
         if (code === selectedCodeRef.current) return;
         setIsTransitioning(true);
-        setTimeout(() => {
-            setSelectedCode(code);
-            setContentKey(k => k + 1);
-            setIsTransitioning(false);
-        }, 120);
-    }, []);
+        // Xóa cache cũ → fetch dữ liệu mới nhất
+        detailCacheRef.current.delete(code);
+        await prefetchDetail(code);
+        setSelectedCode(code);
+        setContentKey(k => k + 1);
+        setIsTransitioning(false);
+    }, [prefetchDetail]);
 
     // ── Effects ───────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -454,7 +459,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     useEffect(() => {
         applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter]);
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter, returnRegisteredFilter]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
     const loadOrdersData = async (targetBills: string[] = bills) => {
@@ -472,6 +477,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setAvailableDispatchCodes([]);
         setSelectedDispatchCode("");
         setReturnTransferFilter(null);
+        setReturnRegisteredFilter(null);
         setGroupedOrders([]);
         setOrdersData([]);
         setShowTraditional(true);
@@ -505,11 +511,12 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
                     const lastIssue           = issueRecords[0];
                     const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
-                    const allDetails: any[] = trackingResp.data?.data?.[0]?.details ?? [];
+                    const allDetails: any[]   = trackingResp.data?.data?.[0]?.details ?? [];
                     const allScanTypes: string[] = allDetails.map((d: any) => d.scanTypeName || '');
-                    const hasReturnTransfer = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
-                    const IGNORED_STATUSES = ['Lịch sử cuộc gọi-phát'];
-                    const realDetail = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
+                    const hasReturnTransfer   = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
+                    const hasReturnRegistered = allScanTypes.some(s => s.includes('Đăng ký chuyển hoàn'));
+                    const IGNORED_STATUSES    = ['Lịch sử cuộc gọi-phát'];
+                    const realDetail          = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
@@ -517,6 +524,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         scanNetworkCode: realDetail?.scanNetworkCode || '',
                         lastIssueScanner,
                         hasReturnTransfer,
+                        hasReturnRegistered,
                     });
                 } catch {
                     mockData.push({
@@ -526,6 +534,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         scanNetworkCode: '',
                         lastIssueScanner: '',
                         hasReturnTransfer: false,
+                        hasReturnRegistered: false,
                     });
                     throw new Error("load failed after retries");
                 }
@@ -585,6 +594,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             if (selectedScanners.length > 0 && !selectedScanners.includes(od.lastIssueScanner)) return false;
             if (selectedDispatchCode && od.terminalDispatchCode !== selectedDispatchCode) return false;
             if (returnTransferFilter !== null && od.hasReturnTransfer !== returnTransferFilter) return false;
+            if (returnRegisteredFilter !== null && od.hasReturnRegistered !== returnRegisteredFilter) return false;
             return true;
         });
         const waybills = filtered.map(o => o.waybill);
@@ -667,6 +677,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedScanners([]);
         setSelectedDispatchCode("");
         setReturnTransferFilter(null);
+        setReturnRegisteredFilter(null);
         setSortMode("default");
     };
 
@@ -752,7 +763,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                 {hasFilterData && (
                     <div className="bg-white border-b border-slate-200 px-5 py-2.5 flex-shrink-0 flex flex-col gap-2">
 
-                        {/* Hàng 1: Trạng thái + Loại đơn */}
+                        {/* Hàng 1: Trạng thái + Mã mạng lưới */}
                         <div className="flex flex-wrap items-center gap-2.5">
                             <div className="flex items-center gap-2">
                                 <Filter className="w-3.5 h-3.5 text-slate-400" />
@@ -797,7 +808,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                             </label>
                         </div>
 
-                        {/* Hàng 2: Mã mạng lưới + Mã đoạn + Chuyển hoàn + Người quét + Reset */}
+                        {/* Hàng 2: Mã đoạn + Người quét + Loại đơn + Chuyển hoàn + Đăng ký hoàn + Reset */}
                         <div className="flex flex-wrap items-center gap-2.5">
 
                             {/* Mã đoạn */}
@@ -895,10 +906,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 )}
                             </label>
 
-
                             <div className="h-5 w-px bg-slate-200" />
 
-                            {/* Chuyển hoàn */}
+                            {/* Chuyển hoàn (đã duyệt) */}
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
                             <div className="flex items-center gap-1.5">
                                 {([
@@ -920,7 +930,29 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 ))}
                             </div>
 
+                            <div className="h-5 w-px bg-slate-200" />
 
+                            {/* Đăng ký hoàn */}
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Đăng ký chuyển hoàn</span>
+                            <div className="flex items-center gap-1.5">
+                                {([
+                                    { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },
+                                    { value: true,  label: 'Đã ĐKCH',   active: 'bg-orange-50 border-orange-400 text-orange-700' },
+                                    { value: false, label: 'Chưa ĐKCH', active: 'bg-sky-50 border-sky-400 text-sky-700' },
+                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                                    <button
+                                        key={String(opt.value)}
+                                        onClick={() => setReturnRegisteredFilter(opt.value)}
+                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                            returnRegisteredFilter === opt.value
+                                                ? opt.active
+                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
 
                             <button onClick={clearFilters}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
