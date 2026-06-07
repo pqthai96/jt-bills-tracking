@@ -736,7 +736,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     <div className="h-5 w-px bg-slate-200" />
 
                     {/* Chuyển hoàn (đã duyệt) */}
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
                     <div className="flex items-center gap-1.5">
                         {([
                             { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
@@ -760,7 +759,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     <div className="h-5 w-px bg-slate-200" />
 
                     {/* Đăng ký hoàn (chưa duyệt) */}
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Đăng ký chuyển hoàn</span>
                     <div className="flex items-center gap-1.5">
                         {([
                             { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },

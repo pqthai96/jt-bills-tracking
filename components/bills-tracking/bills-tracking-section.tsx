@@ -792,7 +792,11 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 </label>
                             ))}
 
-                            <div className="h-5 w-px bg-slate-200" />
+
+                        </div>
+
+                        {/* Hàng 2: Mã đoạn + Người quét + Loại đơn + Chuyển hoàn + Đăng ký hoàn + Reset */}
+                        <div className="flex flex-wrap items-center gap-2.5">
 
                             {/* Mã mạng lưới */}
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
@@ -806,10 +810,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                                 <span className="text-slate-700">Khác</span>
                             </label>
-                        </div>
-
-                        {/* Hàng 2: Mã đoạn + Người quét + Loại đơn + Chuyển hoàn + Đăng ký hoàn + Reset */}
-                        <div className="flex flex-wrap items-center gap-2.5">
+                            <div className="h-5 w-px bg-slate-200" />
 
                             {/* Mã đoạn */}
                             {availableDispatchCodes.length > 0 && (<>
@@ -876,7 +877,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                             {/* Loại đơn hàng */}
                             <div className="h-5 w-px bg-slate-200" />
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Loại đơn</span>
                             <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-orange-300 cursor-pointer transition-all text-xs">
                                 <input
                                     type="checkbox"
@@ -909,7 +909,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                             <div className="h-5 w-px bg-slate-200" />
 
                             {/* Chuyển hoàn (đã duyệt) */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chuyển hoàn</span>
                             <div className="flex items-center gap-1.5">
                                 {([
                                     { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
@@ -933,7 +932,6 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                             <div className="h-5 w-px bg-slate-200" />
 
                             {/* Đăng ký hoàn */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Đăng ký chuyển hoàn</span>
                             <div className="flex items-center gap-1.5">
                                 {([
                                     { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },
