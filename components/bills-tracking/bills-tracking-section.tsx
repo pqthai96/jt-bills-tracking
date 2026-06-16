@@ -960,7 +960,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             {/* Chuyển hoàn */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
                                     { value: true, label: 'Đã chuyển hoàn', active: 'bg-rose-100 text-rose-800 border-rose-200' },
                                     { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
                                 ].map(opt => (
@@ -981,7 +981,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             {/* Đăng ký hoàn */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
                                     { value: true, label: 'Đã ĐKCH', active: 'bg-amber-100 text-amber-800 border-amber-200' },
                                     { value: false, label: 'Chưa ĐKCH', active: 'bg-slate-200 text-slate-700 border-slate-300' },
                                 ].map(opt => (
@@ -1002,7 +1002,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             {/* Xuất kho */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
                                     { value: true, label: 'Đã xuất kho', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
                                     { value: false, label: 'Chưa xuất kho', active: 'bg-amber-100 text-amber-800 border-amber-200' },
                                 ].map(opt => (
