@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback, useMemo, useDeferredValue, memo } from "react";
+import React, {useEffect, useState, useRef, useCallback, useMemo, useDeferredValue, memo} from "react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
@@ -61,6 +61,7 @@ interface OrderData {
     lastIssueScanner: string;
     hasReturnTransfer: boolean;
     hasReturnRegistered: boolean;
+    hasDispatchedToday: boolean; // true nếu có "Quét phát hàng" trong ngày hôm nay
 }
 
 interface GroupedOrder {
@@ -100,8 +101,8 @@ const GROUP_COLORS = [
     'bg-teal-50 border-teal-200',
 ];
 
-const BATCH_SIZE     = 5;
-const MAX_RETRY      = 3;
+const BATCH_SIZE = 5;
+const MAX_RETRY = 3;
 const RETRY_DELAY_MS = 800;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -161,19 +162,46 @@ function isTraditionalOrder(waybill: string): boolean {
     return prefix === "80" || prefix === "84";
 }
 
+// ─── Kiểm tra ngày hôm nay ────────────────────────────────────────────────────
+// scanTime từ API có thể là timestamp (ms) hoặc chuỗi "dd/MM/yyyy HH:mm:ss"
+function isScanToday(scanTime: string | number | null | undefined): boolean {
+    if (!scanTime) return false;
+    let dateObj: Date;
+    if (typeof scanTime === 'number') {
+        dateObj = new Date(scanTime);
+    } else {
+        // Thử parse chuỗi "dd/MM/yyyy HH:mm:ss"
+        const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(scanTime);
+        if (ddmmyyyy) {
+            // Chuyển thành yyyy-MM-dd để Date parse đúng
+            dateObj = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
+        } else {
+            dateObj = new Date(scanTime);
+        }
+    }
+    if (isNaN(dateObj.getTime())) return false;
+    const today = new Date();
+    return (
+        dateObj.getFullYear() === today.getFullYear() &&
+        dateObj.getMonth() === today.getMonth() &&
+        dateObj.getDate() === today.getDate()
+    );
+}
+
 // ─── Progress bar ─────────────────────────────────────────────────────────────
-function LoadProgressBar({ progress }: { progress: LoadProgress }) {
-    const pct      = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
-    const elapsed  = (Date.now() - progress.startedAt) / 1000;
-    const rate     = progress.done > 0 ? progress.done / elapsed : 0;
+function LoadProgressBar({progress}: { progress: LoadProgress }) {
+    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+    const elapsed = (Date.now() - progress.startedAt) / 1000;
+    const rate = progress.done > 0 ? progress.done / elapsed : 0;
     const remaining = progress.total - progress.done;
-    const etaSec   = rate > 0 ? remaining / rate : Infinity;
+    const etaSec = rate > 0 ? remaining / rate : Infinity;
 
     return (
         <div className="bg-violet-50 border-b border-violet-200 px-5 py-2.5 flex-shrink-0 animate-fade-in">
             <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+                    <div
+                        className="w-3.5 h-3.5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin"/>
                     <span className="text-xs font-bold text-violet-700">
                         Đang tải dữ liệu... {progress.done}/{progress.total} đơn
                         {progress.failed > 0 && (
@@ -182,7 +210,7 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
                     </span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-violet-500 font-semibold">
-                    <Clock className="w-3 h-3" />
+                    <Clock className="w-3 h-3"/>
                     {pct < 100 ? (
                         <span>Còn lại ~<span className="text-violet-700">{formatETA(etaSec)}</span></span>
                     ) : (
@@ -195,7 +223,7 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
             <div className="h-2 bg-violet-200/60 rounded-full overflow-hidden">
                 <div
                     className="h-full rounded-full transition-all duration-300 ease-out progress-shimmer"
-                    style={{ width: `${pct}%` }}
+                    style={{width: `${pct}%`}}
                 />
             </div>
             <div className="flex justify-between mt-1">
@@ -223,10 +251,10 @@ const BillItem = memo(function BillItem({
     groupColor: string;
     terminalDispatchCode: string;
     onSelect: (code: string) => void;
-    onHover:  (code: string) => void;
+    onHover: (code: string) => void;
 }) {
     const selectedCode = React.useContext(SelectedCodeCtx);
-    const isSelected   = selectedCode === code;
+    const isSelected = selectedCode === code;
     return (
         <div
             onClick={() => onSelect(code)}
@@ -238,13 +266,15 @@ const BillItem = memo(function BillItem({
             }`}
         >
             {isSelected && (
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500" />
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-violet-500"/>
             )}
-            <div className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
+            <div
+                className={`text-center font-mono font-bold text-xs ${isSelected ? 'text-violet-700' : 'text-slate-800'}`}>
                 {code}
             </div>
             {terminalDispatchCode && (
-                <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
+                <div
+                    className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
                     {terminalDispatchCode}
                 </div>
             )}
@@ -253,47 +283,50 @@ const BillItem = memo(function BillItem({
 });
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function BillsTrackingSection({ bills, authToken, isBillTracking }: BillsTrackingSectionProps) {
+export default function BillsTrackingSection({bills, authToken, isBillTracking}: BillsTrackingSectionProps) {
 
-    const [selectedCode, setSelectedCode]         = useState<string | null>(null);
-    const [inputCode, setInputCode]               = useState<string>("");
-    const [parsedCodes, setParsedCodes]           = useState<string[]>([]);
-    const [billsList, setBillsList]               = useState<string[]>(bills);
+    const [selectedCode, setSelectedCode] = useState<string | null>(null);
+    const [inputCode, setInputCode] = useState<string>("");
+    const [parsedCodes, setParsedCodes] = useState<string[]>([]);
+    const [billsList, setBillsList] = useState<string[]>(bills);
     const [isSearchExpanded, setIsSearchExpanded] = useState<boolean>(true);
 
-    const [ordersData, setOrdersData]             = useState<OrderData[]>([]);
-    const [groupedOrders, setGroupedOrders]       = useState<GroupedOrder[]>([]);
-    const [filteredBills, setFilteredBills]       = useState<string[]>([]);
-    const [isLoadingOrders, setIsLoadingOrders]   = useState<boolean>(false);
+    const [ordersData, setOrdersData] = useState<OrderData[]>([]);
+    const [groupedOrders, setGroupedOrders] = useState<GroupedOrder[]>([]);
+    const [filteredBills, setFilteredBills] = useState<string[]>([]);
+    const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
 
-    const [loadProgress, setLoadProgress]         = useState<LoadProgress | null>(null);
+    const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
 
-    const [availableStatuses, setAvailableStatuses]   = useState<string[]>([]);
-    const [selectedStatuses, setSelectedStatuses]     = useState<string[]>([]);
-    const [show028M08, setShow028M08]                 = useState<boolean>(true);
-    const [showNon028M08, setShowNon028M08]           = useState<boolean>(true);
-    const [showTraditional, setShowTraditional]       = useState<boolean>(true);
-    const [showEcommerce, setShowEcommerce]           = useState<boolean>(true);
-    const [copied, setCopied]                         = useState(false);
-    const [sortMode, setSortMode]                     = useState<SortMode>("default");
+    const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
+    const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+    const [show028M08, setShow028M08] = useState<boolean>(true);
+    const [showNon028M08, setShowNon028M08] = useState<boolean>(true);
+    const [showTraditional, setShowTraditional] = useState<boolean>(true);
+    const [showEcommerce, setShowEcommerce] = useState<boolean>(true);
+    const [copied, setCopied] = useState(false);
+    const [sortMode, setSortMode] = useState<SortMode>("default");
 
-    const [availableScanners, setAvailableScanners]   = useState<string[]>([]);
-    const [selectedScanners, setSelectedScanners]     = useState<string[]>([]);
+    const [availableScanners, setAvailableScanners] = useState<string[]>([]);
+    const [selectedScanners, setSelectedScanners] = useState<string[]>([]);
 
     const [availableDispatchCodes, setAvailableDispatchCodes] = useState<string[]>([]);
-    const [selectedDispatchCode, setSelectedDispatchCode]     = useState<string>("");
+    const [selectedDispatchCode, setSelectedDispatchCode] = useState<string>("");
 
     // null = tất cả, true = đã chuyển hoàn, false = chưa chuyển hoàn
-    const [returnTransferFilter, setReturnTransferFilter]     = useState<boolean | null>(null);
+    const [returnTransferFilter, setReturnTransferFilter] = useState<boolean | null>(null);
 
     // null = tất cả, true = đã đăng ký hoàn, false = chưa đăng ký hoàn
     const [returnRegisteredFilter, setReturnRegisteredFilter] = useState<boolean | null>(null);
 
+    // null = tất cả, true = đã xuất kho hôm nay, false = chưa xuất kho hôm nay
+    const [dispatchedTodayFilter, setDispatchedTodayFilter] = useState<boolean | null>(null);
+
     // Tổng số đơn gốc (trước filter) — dùng để hiển thị "X / Y đơn"
     const [totalSourceCount, setTotalSourceCount] = useState<number>(bills.length);
 
-    const detailCacheRef                        = useRef<Map<string, DetailCache>>(new Map());
-    const [contentKey, setContentKey]           = useState(0);
+    const detailCacheRef = useRef<Map<string, DetailCache>>(new Map());
+    const [contentKey, setContentKey] = useState(0);
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
@@ -308,8 +341,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     // ── Helpers ───────────────────────────────────────────────────────────────
     const parseTerminalCode = (code: string) => {
         const parts = code.split('-');
-        if (parts.length >= 3) return { level1: parts[1], level2: parts[2] };
-        return { level1: '', level2: '' };
+        if (parts.length >= 3) return {level1: parts[1], level2: parts[2]};
+        return {level1: '', level2: ''};
     };
 
     const createGroupedOrders = (orders: OrderData[]): GroupedOrder[] => {
@@ -319,7 +352,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         const level1Groups = new Map<string, OrderData[]>();
 
         orders.forEach(order => {
-            const { level1 } = parseTerminalCode(order.terminalDispatchCode);
+            const {level1} = parseTerminalCode(order.terminalDispatchCode);
             if (!level1Groups.has(level1)) level1Groups.set(level1, []);
             level1Groups.get(level1)!.push(order);
         });
@@ -327,7 +360,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         level1Groups.forEach((level1Orders, level1Key) => {
             const level2Groups = new Map<string, OrderData[]>();
             level1Orders.forEach(order => {
-                const { level2 } = parseTerminalCode(order.terminalDispatchCode);
+                const {level2} = parseTerminalCode(order.terminalDispatchCode);
                 const key = `${level1Key}-${level2}`;
                 if (!level2Groups.has(key)) level2Groups.set(key, []);
                 level2Groups.get(key)!.push(order);
@@ -361,7 +394,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         const partMap = new Map<string, { p1: string; p2: string; p3: string }>();
         groupedOrders.forEach(o => {
             const parts = (o.terminalDispatchCode || "").split('-');
-            partMap.set(o.waybill, { p1: parts[0] || "", p2: parts[1] || "", p3: parts[2] || "" });
+            partMap.set(o.waybill, {p1: parts[0] || "", p2: parts[1] || "", p3: parts[2] || ""});
         });
 
         const p2Count = new Map<string, number>();
@@ -371,24 +404,29 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         });
         let mainP2 = "";
         let maxCount = 0;
-        p2Count.forEach((count, p2) => { if (count > maxCount) { maxCount = count; mainP2 = p2; } });
+        p2Count.forEach((count, p2) => {
+            if (count > maxCount) {
+                maxCount = count;
+                mainP2 = p2;
+            }
+        });
 
         return [...billsList].sort((a, b) => {
-            const pa = partMap.get(a) ?? { p1: "", p2: "", p3: "" };
-            const pb = partMap.get(b) ?? { p1: "", p2: "", p3: "" };
+            const pa = partMap.get(a) ?? {p1: "", p2: "", p3: ""};
+            const pb = partMap.get(b) ?? {p1: "", p2: "", p3: ""};
             const aIsMain = pa.p2 === mainP2;
             const bIsMain = pb.p2 === mainP2;
 
             if (sortMode === "dispatch_asc") {
                 if (aIsMain && !bIsMain) return -1;
                 if (!aIsMain && bIsMain) return 1;
-                if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
-                return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, { numeric: true });
+                if (pa.p2 === pb.p2) return pa.p3.localeCompare(pb.p3, undefined, {numeric: true});
+                return pa.p2.localeCompare(pb.p2) || pa.p3.localeCompare(pb.p3, undefined, {numeric: true});
             } else {
                 if (aIsMain && !bIsMain) return 1;
                 if (!aIsMain && bIsMain) return -1;
-                if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
-                return pb.p2.localeCompare(pa.p2) || pb.p3.localeCompare(pa.p3, undefined, { numeric: true });
+                if (pa.p2 === pb.p2) return pb.p3.localeCompare(pa.p3, undefined, {numeric: true});
+                return pb.p2.localeCompare(pa.p2) || pb.p3.localeCompare(pa.p3, undefined, {numeric: true});
             }
         });
     }, [billsList, groupedOrders, sortMode]);
@@ -409,18 +447,18 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
                 axios.post(
                     "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
-                    { waybillNo: waybill, countryId: "1" },
-                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                    {waybillNo: waybill, countryId: "1"},
+                    {headers: {authToken, lang: 'VN', langType: 'VN'}}
                 ),
                 axios.post(
                     "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
-                    { keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1" },
-                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                    {keywordList: [waybill], trackingTypeEnum: "WAYBILL", countryId: "1"},
+                    {headers: {authToken, lang: 'VN', langType: 'VN'}}
                 ),
                 axios.post(
                     "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
-                    { current: 1, size: 100, waybillId: waybill, countryId: "1" },
-                    { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                    {current: 1, size: 100, waybillId: waybill, countryId: "1"},
+                    {headers: {authToken, lang: 'VN', langType: 'VN'}}
                 ),
             ]);
             detailCacheRef.current.set(waybill, {
@@ -428,12 +466,15 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                 podHistory: (podResp.data?.data?.[0]?.details ?? []).reverse(),
                 issueHistory: issueResp.data?.data?.records ?? [],
             });
-        } catch { }
+        } catch {
+        }
     }, [authToken]);
 
     // ── Select with transition ────────────────────────────────────────────────
     const selectedCodeRef = useRef(selectedCode);
-    useEffect(() => { selectedCodeRef.current = selectedCode; }, [selectedCode]);
+    useEffect(() => {
+        selectedCodeRef.current = selectedCode;
+    }, [selectedCode]);
 
     const handleSelectCode = useCallback(async (code: string) => {
         if (code === selectedCodeRef.current) return;
@@ -459,7 +500,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
     useEffect(() => {
         applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter, returnRegisteredFilter]);
+    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
     const loadOrdersData = async (targetBills: string[] = bills) => {
@@ -467,7 +508,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         detailCacheRef.current.clear();
 
         const startedAt = Date.now();
-        setLoadProgress({ total: targetBills.length, done: 0, failed: 0, startedAt });
+        setLoadProgress({total: targetBills.length, done: 0, failed: 0, startedAt});
 
         // Reset filter state khi load mới
         setAvailableStatuses([]);
@@ -478,6 +519,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedDispatchCode("");
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
+        setDispatchedTodayFilter(null);
         setGroupedOrders([]);
         setOrdersData([]);
         setShowTraditional(true);
@@ -493,30 +535,38 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         Promise.all([
                             axios.post(
                                 "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail",
-                                { waybillNo: bill, countryId: "1" },
-                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                                {waybillNo: bill, countryId: "1"},
+                                {headers: {authToken, lang: 'VN', langType: 'VN'}}
                             ),
                             axios.post(
                                 "https://jmsgw.jtexpress.vn/operatingplatform/podTracking/inner/query/keywordList",
-                                { keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1" },
-                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                                {keywordList: [bill], trackingTypeEnum: "WAYBILL", countryId: "1"},
+                                {headers: {authToken, lang: 'VN', langType: 'VN'}}
                             ),
                             axios.post(
                                 "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
-                                { current: 1, size: 100, waybillId: bill, countryId: "1" },
-                                { headers: { authToken, lang: 'VN', langType: 'VN' } }
+                                {current: 1, size: 100, waybillId: bill, countryId: "1"},
+                                {headers: {authToken, lang: 'VN', langType: 'VN'}}
                             ),
                         ])
                     );
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
-                    const lastIssue           = issueRecords[0];
-                    const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
-                    const allDetails: any[]   = trackingResp.data?.data?.[0]?.details ?? [];
+                    const lastIssue = issueRecords[0];
+                    const lastIssueScanner = lastIssue?.operatorName || lastIssue?.scanUserName || '';
+                    const allDetails: any[] = trackingResp.data?.data?.[0]?.details ?? [];
                     const allScanTypes: string[] = allDetails.map((d: any) => d.scanTypeName || '');
-                    const hasReturnTransfer   = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
+                    const hasReturnTransfer = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
                     const hasReturnRegistered = allScanTypes.some(s => s.includes('Đăng ký chuyển hoàn'));
-                    const IGNORED_STATUSES    = ['Lịch sử cuộc gọi-phát'];
-                    const realDetail          = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
+
+                    // Kiểm tra đã "Quét phát hàng" trong ngày hôm nay chưa
+                    const hasDispatchedToday = allDetails.some(
+                        (d: any) =>
+                            (d.scanTypeName || '').includes('Quét phát hàng') &&
+                            isScanToday(d.scanTime)
+                    );
+
+                    const IGNORED_STATUSES = ['Lịch sử cuộc gọi-phát'];
+                    const realDetail = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
@@ -525,6 +575,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         lastIssueScanner,
                         hasReturnTransfer,
                         hasReturnRegistered,
+                        hasDispatchedToday,
                     });
                 } catch {
                     mockData.push({
@@ -535,12 +586,13 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         lastIssueScanner: '',
                         hasReturnTransfer: false,
                         hasReturnRegistered: false,
+                        hasDispatchedToday: false,
                     });
                     throw new Error("load failed after retries");
                 }
             },
             (done, failed) => {
-                setLoadProgress({ total: targetBills.length, done, failed, startedAt });
+                setLoadProgress({total: targetBills.length, done, failed, startedAt});
             },
             BATCH_SIZE,
         );
@@ -595,6 +647,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
             if (selectedDispatchCode && od.terminalDispatchCode !== selectedDispatchCode) return false;
             if (returnTransferFilter !== null && od.hasReturnTransfer !== returnTransferFilter) return false;
             if (returnRegisteredFilter !== null && od.hasReturnRegistered !== returnRegisteredFilter) return false;
+            if (dispatchedTodayFilter !== null && od.hasDispatchedToday !== dispatchedTodayFilter) return false;
             return true;
         });
         const waybills = filtered.map(o => o.waybill);
@@ -678,6 +731,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
         setSelectedDispatchCode("");
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
+        setDispatchedTodayFilter(null);
         setSortMode("default");
     };
 
@@ -688,18 +742,20 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     const orderTypeCounts = useMemo(() => {
         const allWaybills = groupedOrders.map(o => o.waybill);
         const traditional = allWaybills.filter(w => isTraditionalOrder(w)).length;
-        const ecommerce   = allWaybills.length - traditional;
-        return { traditional, ecommerce };
+        const ecommerce = allWaybills.length - traditional;
+        return {traditional, ecommerce};
     }, [groupedOrders]);
 
     // ── Loading screen ────────────────────────────────────────────────────────
     if (shouldShowLoading) {
         return (
             <>
-                <FontLoader />
+                <FontLoader/>
                 <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
-                        <div className="w-10 h-10 border-[3px] border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                    <div
+                        className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
+                        <div
+                            className="w-10 h-10 border-[3px] border-slate-200 border-t-blue-500 rounded-full animate-spin"/>
                         <p className="font-bold text-slate-700">Đang tải dữ liệu...</p>
                         <p className="text-xs text-slate-400">Vui lòng đợi trong giây lát</p>
                     </div>
@@ -711,24 +767,24 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
     // ── Main ──────────────────────────────────────────────────────────────────
     return (
         <>
-            <FontLoader />
+            <FontLoader/>
             <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
 
                 {/* ── Top bar ── */}
                 <div className="bg-white border-b border-slate-200 flex-shrink-0 z-20">
-                    <div className="px-5 h-14 flex items-center justify-between">
+                    <div className="px-5 h-10 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <button
                                 onClick={() => window.history.back()}
                                 className="flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors text-sm font-semibold"
                             >
-                                <ArrowLeft className="w-4 h-4" />
+                                <ArrowLeft className="w-4 h-4"/>
                                 Quay lại
                             </button>
-                            <div className="w-px h-5 bg-slate-200" />
+                            <div className="w-px h-5 bg-slate-200"/>
                             <div className="flex items-center gap-2">
                                 <div className="w-7 h-7 bg-blue-100 rounded-lg flex items-center justify-center">
-                                    <Truck className="w-3.5 h-3.5 text-blue-600" />
+                                    <Truck className="w-3.5 h-3.5 text-blue-600"/>
                                 </div>
                                 <span className="font-bold text-slate-800 text-sm">
                                     {isBillTracking ? "Tra cứu vận đơn" : "Theo dõi vận đơn"}
@@ -737,7 +793,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         </div>
 
                         <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
+                            <span
+                                className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
                                 {hasFilterData
                                     ? `${filteredBills.length} / ${totalSourceCount}`
                                     : billsList.length} đơn
@@ -747,7 +804,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 disabled={isLoadingOrders}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-semibold text-xs transition-all disabled:opacity-40"
                             >
-                                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrders ? "animate-spin" : ""}`} />
+                                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrders ? "animate-spin" : ""}`}/>
                                 Làm mới
                             </button>
                         </div>
@@ -756,172 +813,164 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
 
                 {/* ── Progress bar ── */}
                 {loadProgress && (
-                    <LoadProgressBar progress={loadProgress} />
+                    <LoadProgressBar progress={loadProgress}/>
                 )}
 
                 {/* ── Filter bar ── */}
                 {hasFilterData && (
-                    <div className="bg-white border-b border-slate-200 px-5 py-2.5 flex-shrink-0 flex flex-col gap-2">
+                    <div className="bg-blue-50/60 border-b border-blue-100 px-5 py-2 flex-shrink-0 flex flex-col gap-2">
 
-                        {/* Hàng 1: Trạng thái + Mã mạng lưới */}
-                        <div className="flex flex-wrap items-center gap-2.5">
-                            <div className="flex items-center gap-2">
-                                <Filter className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Bộ lọc</span>
+                        {/* Hàng 1: Trạng thái */}
+                        <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <button
+                                    onClick={() => handleSelectAllStatuses(selectedStatuses.length < availableStatuses.length)}
+                                    className={`px-3 py-1 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                        selectedStatuses.length === availableStatuses.length
+                                            ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                                            : 'bg-white text-slate-500 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
+                                    }`}
+                                >
+                                    Tất cả
+                                </button>
+
+                                {availableStatuses.map(status => (
+                                    <button
+                                        key={status}
+                                        onClick={() => handleStatusChange(status, !selectedStatuses.includes(status))}
+                                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            selectedStatuses.includes(status)
+                                                ? 'bg-amber-100 text-amber-800 border-amber-200'
+                                                : 'bg-white border-slate-200 text-slate-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
+                                        }`}
+                                    >
+                                        {status}
+                                    </button>
+                                ))}
                             </div>
-
-                            {/* Trạng thái */}
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedStatuses.length === availableStatuses.length}
-                                    onChange={e => handleSelectAllStatuses(e.target.checked)}
-                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="font-semibold text-slate-700">Tất cả</span>
-                            </label>
-                            {availableStatuses.map(status => (
-                                <label key={status} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedStatuses.includes(status)}
-                                        onChange={e => handleStatusChange(status, e.target.checked)}
-                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                    />
-                                    <span className="text-slate-700">{status}</span>
-                                </label>
-                            ))}
-
-
                         </div>
 
-                        {/* Hàng 2: Mã đoạn + Người quét + Loại đơn + Chuyển hoàn + Đăng ký hoàn + Reset */}
-                        <div className="flex flex-wrap items-center gap-2.5">
+                        {/* Hàng 2 */}
+                        <div className="flex flex-wrap items-stretch gap-2">
 
-                            {/* Mã mạng lưới */}
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã mạng lưới</span>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                <input type="checkbox" checked={show028M08} onChange={e => setShow028M08(e.target.checked)}
-                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                                <span className="font-semibold text-slate-700">028M08</span>
-                            </label>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 cursor-pointer transition-all text-xs">
-                                <input type="checkbox" checked={showNon028M08} onChange={e => setShowNon028M08(e.target.checked)}
-                                       className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                                <span className="text-slate-700">Khác</span>
-                            </label>
-                            <div className="h-5 w-px bg-slate-200" />
+                            {/* Loại đơn */}
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+
+                                <button
+                                    onClick={() => setShowTraditional(!showTraditional)}
+                                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                        showTraditional
+                                            ?  'bg-teal-100 text-teal-800 border-teal-200'
+                                            : 'bg-white border-slate-200 text-slate-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
+                                    }`}
+                                >
+                                    TRUYỀN THỐNG
+                                </button>
+
+                                <button
+                                    onClick={() => setShowEcommerce(!showEcommerce)}
+                                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                        showEcommerce
+                                            ? 'bg-blue-100 text-blue-800 border-blue-200'
+                                            : 'bg-white border-slate-200 text-slate-500 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700'
+                                    }`}
+                                >
+                                    ĐƠN SÀN
+                                </button>
+                            </div>
 
                             {/* Mã đoạn */}
-                            {availableDispatchCodes.length > 0 && (<>
-                                <div className="flex items-center gap-1.5">
-                                    <Truck className="w-3.5 h-3.5 text-slate-400" />
-                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Mã đoạn</span>
-                                </div>
-                                <select
-                                    value={selectedDispatchCode}
-                                    onChange={e => setSelectedDispatchCode(e.target.value)}
-                                    className={`text-xs font-semibold border rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/40 transition-all cursor-pointer ${
-                                        selectedDispatchCode
-                                            ? 'bg-blue-50 border-blue-300 text-blue-800'
-                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-300'
-                                    }`}
-                                >
-                                    <option value="">Tất cả ({availableDispatchCodes.length} mã)</option>
-                                    {availableDispatchCodes.map(code => (
-                                        <option key={code} value={code}>{code}</option>
-                                    ))}
-                                </select>
-                                {selectedDispatchCode && (
-                                    <button
-                                        onClick={() => setSelectedDispatchCode("")}
-                                        className="text-blue-500 hover:text-blue-700 transition-colors"
-                                        title="Bỏ lọc"
+                            {availableDispatchCodes.length > 0 && (
+                                <div className="flex items-center gap-1.5 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                    <select
+                                        value={selectedDispatchCode}
+                                        onChange={e => setSelectedDispatchCode(e.target.value)}
+                                        className={`text-xs font-semibold border rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-200 transition-all cursor-pointer ${
+                                            selectedDispatchCode
+                                                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                                : 'bg-white border-slate-200 text-slate-600'
+                                        }`}
                                     >
-                                        <X className="w-3.5 h-3.5" />
-                                    </button>
-                                )}
-                                <div className="h-5 w-px bg-slate-200" />
-                            </>)}
+                                        <option value="">MÃ ĐOẠN ({availableDispatchCodes.length})</option>
+                                        {availableDispatchCodes.map(code => (
+                                            <option key={code} value={code}>{code}</option>
+                                        ))}
+                                    </select>
 
-                            {/* Người quét vấn đề */}
-                            {availableScanners.length > 0 && (<>
-                                <div className="flex items-center gap-1.5">
-                                    <User className="w-3.5 h-3.5 text-slate-400" />
-                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Người quét vấn đề</span>
+                                    {selectedDispatchCode && (
+                                        <button
+                                            onClick={() => setSelectedDispatchCode("")}
+                                            className="text-amber-400 hover:text-amber-600 transition-colors"
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    )}
                                 </div>
-                                <select
-                                    value={selectedScanners[0] ?? ""}
-                                    onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
-                                    className={`text-xs font-semibold border rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400/40 transition-all cursor-pointer ${
-                                        selectedScanners.length > 0
-                                            ? 'bg-amber-50 border-amber-300 text-amber-800'
-                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-300'
-                                    }`}
-                                >
-                                    <option value="">Tất cả ({availableScanners.length} người)</option>
-                                    {availableScanners.map(name => (
-                                        <option key={name} value={name}>{name}</option>
-                                    ))}
-                                </select>
-                                {selectedScanners.length > 0 && (
-                                    <button
-                                        onClick={() => setSelectedScanners([])}
-                                        className="text-amber-500 hover:text-amber-700 transition-colors"
-                                        title="Bỏ lọc"
+                            )}
+
+                            {/* Người quét KVĐ */}
+                            {availableScanners.length > 0 && (
+                                <div className="flex items-center gap-1.5 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                    <select
+                                        value={selectedScanners[0] ?? ""}
+                                        onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
+                                        className={`text-xs font-semibold border rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-teal-200 transition-all cursor-pointer ${
+                                            selectedScanners.length > 0
+                                                ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                                : 'bg-white border-slate-200 text-slate-600'
+                                        }`}
                                     >
-                                        <X className="w-3.5 h-3.5" />
+                                        <option value="">NGƯỜI QUÉT KVĐ ({availableScanners.length})</option>
+                                        {availableScanners.map(name => (
+                                            <option key={name} value={name}>{name}</option>
+                                        ))}
+                                    </select>
+
+                                    {selectedScanners.length > 0 && (
+                                        <button
+                                            onClick={() => setSelectedScanners([])}
+                                            className="text-teal-400 hover:text-teal-600 transition-colors"
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Mạng lưới */}
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                {[
+                                    { key: 'show028M08', label: '028M08', state: show028M08, set: setShow028M08 },
+                                    { key: 'showNon028M08', label: 'Khác', state: showNon028M08, set: setShowNon028M08 },
+                                ].map(opt => (
+                                    <button
+                                        key={opt.key}
+                                        onClick={() => opt.set(!opt.state)}
+                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            opt.state
+                                                ? 'bg-teal-100 text-teal-800 border-teal-200'
+                                                : 'bg-white border-slate-200 text-slate-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
+                                        }`}
+                                    >
+                                        {opt.label}
                                     </button>
-                                )}
-                            </>)}
+                                ))}
+                            </div>
 
-                            {/* Loại đơn hàng */}
-                            <div className="h-5 w-px bg-slate-200" />
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-orange-300 cursor-pointer transition-all text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={showTraditional}
-                                    onChange={e => setShowTraditional(e.target.checked)}
-                                    className="rounded border-slate-300 text-orange-500 focus:ring-orange-400"
-                                />
-                                <span className="font-semibold text-orange-700">TRUYỀN THỐNG</span>
-                                {orderTypeCounts.traditional > 0 && (
-                                    <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                                        {orderTypeCounts.traditional}
-                                    </span>
-                                )}
-                            </label>
-                            <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:border-violet-300 cursor-pointer transition-all text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={showEcommerce}
-                                    onChange={e => setShowEcommerce(e.target.checked)}
-                                    className="rounded border-slate-300 text-violet-500 focus:ring-violet-400"
-                                />
-                                <span className="font-semibold text-violet-700">ĐƠN SÀN</span>
-                                {orderTypeCounts.ecommerce > 0 && (
-                                    <span className="bg-violet-100 text-violet-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                                        {orderTypeCounts.ecommerce}
-                                    </span>
-                                )}
-                            </label>
-
-                            <div className="h-5 w-px bg-slate-200" />
-
-                            {/* Chuyển hoàn (đã duyệt) */}
-                            <div className="flex items-center gap-1.5">
-                                {([
-                                    { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                                    { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
-                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
-                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                            {/* Chuyển hoàn */}
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                {[
+                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: true, label: 'Đã chuyển hoàn', active: 'bg-rose-100 text-rose-800 border-rose-200' },
+                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                                ].map(opt => (
                                     <button
                                         key={String(opt.value)}
                                         onClick={() => setReturnTransferFilter(opt.value)}
-                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
                                             returnTransferFilter === opt.value
                                                 ? opt.active
-                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
                                         }`}
                                     >
                                         {opt.label}
@@ -929,22 +978,20 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 ))}
                             </div>
 
-                            <div className="h-5 w-px bg-slate-200" />
-
                             {/* Đăng ký hoàn */}
-                            <div className="flex items-center gap-1.5">
-                                {([
-                                    { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                                    { value: true,  label: 'Đã ĐKCH',   active: 'bg-orange-50 border-orange-400 text-orange-700' },
-                                    { value: false, label: 'Chưa ĐKCH', active: 'bg-sky-50 border-sky-400 text-sky-700' },
-                                ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                {[
+                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: true, label: 'Đã ĐKCH', active: 'bg-amber-100 text-amber-800 border-amber-200' },
+                                    { value: false, label: 'Chưa ĐKCH', active: 'bg-slate-200 text-slate-700 border-slate-300' },
+                                ].map(opt => (
                                     <button
                                         key={String(opt.value)}
                                         onClick={() => setReturnRegisteredFilter(opt.value)}
-                                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
                                             returnRegisteredFilter === opt.value
                                                 ? opt.active
-                                                : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
                                         }`}
                                     >
                                         {opt.label}
@@ -952,12 +999,37 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 ))}
                             </div>
 
-                            <button onClick={clearFilters}
-                                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
-                                <RotateCcw className="w-3 h-3" />Reset
-                            </button>
-                        </div>
+                            {/* Xuất kho */}
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                {[
+                                    { value: null, label: 'Tất cả', active: 'bg-slate-100 text-slate-700 border-slate-200' },
+                                    { value: true, label: 'Đã xuất kho', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                                    { value: false, label: 'Chưa xuất kho', active: 'bg-amber-100 text-amber-800 border-amber-200' },
+                                ].map(opt => (
+                                    <button
+                                        key={String(opt.value)}
+                                        onClick={() => setDispatchedTodayFilter(opt.value)}
+                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            dispatchedTodayFilter === opt.value
+                                                ? opt.active
+                                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
 
+                            {/* Reset */}
+                            <button
+                                onClick={clearFilters}
+                                className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 bg-white hover:bg-rose-50 px-3 py-1.5 rounded-xl transition-all duration-200 hover:shadow-md active:scale-95 ml-auto self-stretch shadow-sm"
+                            >
+                                <RotateCcw className="w-3 h-3" />
+                                Reset
+                            </button>
+
+                        </div>
                     </div>
                 )}
 
@@ -965,14 +1037,16 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                 <div className="flex flex-1 overflow-hidden">
 
                     {/* ── Sidebar ── */}
-                    <div className={`flex flex-col bg-white border-r border-slate-200 transition-all duration-300 ease-in-out flex-shrink-0 ${isSearchExpanded ? 'w-80' : 'w-56'}`}>
+                    <div
+                        className={`flex flex-col bg-white border-r border-slate-200 transition-all duration-300 ease-in-out flex-shrink-0 ${isSearchExpanded ? 'w-80' : 'w-56'}`}>
 
                         {isBillTracking && (
                             <div
                                 className="px-4 py-4 border-b border-slate-100 flex-shrink-0 cursor-pointer"
                                 onClick={() => setIsSearchExpanded(true)}
                             >
-                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                                <label
+                                    className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
                                     Nhập mã vận đơn
                                 </label>
                                 <textarea
@@ -985,45 +1059,63 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 {isSearchExpanded && parsedCodes.length > 0 && (
                                     <div className="mt-2 max-h-32 overflow-y-auto space-y-1.5">
                                         {parsedCodes.map((code, i) => (
-                                            <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
-                                                <span className="text-xs font-mono font-semibold text-blue-800">{code}</span>
-                                                <button onClick={e => { e.stopPropagation(); removeParsedCode(code); }}
+                                            <div key={i}
+                                                 className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
+                                                <span
+                                                    className="text-xs font-mono font-semibold text-blue-800">{code}</span>
+                                                <button onClick={e => {
+                                                    e.stopPropagation();
+                                                    removeParsedCode(code);
+                                                }}
                                                         className="text-slate-400 hover:text-red-500 transition-colors">
-                                                    <X className="w-3.5 h-3.5" />
+                                                    <X className="w-3.5 h-3.5"/>
                                                 </button>
                                             </div>
                                         ))}
                                     </div>
                                 )}
                                 {!isSearchExpanded && parsedCodes.length > 0 && (
-                                    <p className="mt-1.5 text-xs text-blue-600 font-semibold">{parsedCodes.length} mã đã nhập</p>
+                                    <p className="mt-1.5 text-xs text-blue-600 font-semibold">{parsedCodes.length} mã đã
+                                        nhập</p>
                                 )}
                                 <button
-                                    onClick={e => { e.stopPropagation(); handleSearch(); }}
+                                    onClick={e => {
+                                        e.stopPropagation();
+                                        handleSearch();
+                                    }}
                                     disabled={parsedCodes.length === 0 || isLoadingOrders}
                                     className="w-full mt-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm"
                                 >
                                     {isLoadingOrders
-                                        ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Đang tải...</>
-                                        : <><Search className="w-4 h-4" />Tra cứu ({parsedCodes.length})</>
+                                        ? <>
+                                            <div
+                                                className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"/>
+                                            Đang tải...</>
+                                        : <><Search className="w-4 h-4"/>Tra cứu ({parsedCodes.length})</>
                                     }
                                 </button>
                             </div>
                         )}
 
                         {/* Bills list header */}
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col cursor-pointer" onClick={() => setIsSearchExpanded(false)}>
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col cursor-pointer"
+                             onClick={() => setIsSearchExpanded(false)}>
                             <div className="px-4 pt-4 pb-2 flex-shrink-0 flex items-center justify-between gap-2">
-                                <span className="text-xs font-bold text-slate-500 uppercase tracking-wide flex gap-2 items-center">
+                                <span
+                                    className="text-xs font-bold text-slate-500 uppercase tracking-wide flex gap-2 items-center">
                                     Danh sách
                                     {isLoadingOrders && !loadProgress && (
-                                        <div className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                                        <div
+                                            className="w-3 h-3 border-2 border-slate-200 border-t-blue-500 rounded-full animate-spin"/>
                                     )}
                                 </span>
                                 <div className="flex items-center gap-1.5">
                                     {hasFilterData && (
                                         <button
-                                            onClick={e => { e.stopPropagation(); cycleSortMode(); }}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                cycleSortMode();
+                                            }}
                                             title="Sắp xếp theo mã đoạn"
                                             className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
                                                 sortMode !== "default"
@@ -1031,12 +1123,15 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                                     : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200"
                                             }`}
                                         >
-                                            <ArrowUpDown className="w-3 h-3" />
+                                            <ArrowUpDown className="w-3 h-3"/>
                                             {isSearchExpanded ? sortLabel : ""}
                                         </button>
                                     )}
                                     <button
-                                        onClick={e => { e.stopPropagation(); handleCopy(); }}
+                                        onClick={e => {
+                                            e.stopPropagation();
+                                            handleCopy();
+                                        }}
                                         disabled={sortedBillsList.length === 0}
                                         title="Copy tất cả mã vận đơn"
                                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -1046,8 +1141,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                         }`}
                                     >
                                         {copied
-                                            ? <><Check className="w-3 h-3" />Copied!</>
-                                            : <><Copy className="w-3 h-3" />({sortedBillsList.length})</>
+                                            ? <><Check className="w-3 h-3"/>Copied!</>
+                                            : <><Copy className="w-3 h-3"/>({sortedBillsList.length})</>
                                         }
                                     </button>
                                 </div>
@@ -1057,7 +1152,7 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                 <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-1.5">
                                     {deferredList.length === 0 ? (
                                         <div className="text-center py-10">
-                                            <Package className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                                            <Package className="w-10 h-10 text-slate-200 mx-auto mb-3"/>
                                             <p className="text-sm font-semibold text-slate-400">
                                                 {isLoadingOrders
                                                     ? "Đang tải dữ liệu..."
@@ -1091,8 +1186,9 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                         {!selectedCode ? (
                             <div className="flex-1 flex items-center justify-center bg-slate-50">
                                 <div className="text-center">
-                                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                        <Package className="w-8 h-8 text-slate-300" />
+                                    <div
+                                        className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                        <Package className="w-8 h-8 text-slate-300"/>
                                     </div>
                                     <p className="font-bold text-slate-500">
                                         {isLoadingOrders
@@ -1100,7 +1196,8 @@ export default function BillsTrackingSection({ bills, authToken, isBillTracking 
                                             : "Chọn một mã vận đơn để xem chi tiết"}
                                     </p>
                                     {!isLoadingOrders && sortedBillsList.length > 0 && (
-                                        <p className="text-xs text-slate-400 mt-1">Có {sortedBillsList.length} vận đơn trong danh sách</p>
+                                        <p className="text-xs text-slate-400 mt-1">Có {sortedBillsList.length} vận đơn
+                                            trong danh sách</p>
                                     )}
                                 </div>
                             </div>
