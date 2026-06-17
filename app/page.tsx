@@ -429,9 +429,30 @@ export default function Home() {
                     <div className="space-y-3">
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Chức năng</p>
 
-                        {/* 3×3 grid — 9 items đều nhau */}
+                        {/* Hàng 1: 2 nút */}
+                        <div className="grid grid-cols-2 gap-3">
+                            {NAV_ITEMS.slice(0, 2).map(item => (
+                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                            ))}
+                        </div>
+
+                        {/* Hàng 2: 3 nút */}
                         <div className="grid grid-cols-3 gap-3">
-                            {NAV_ITEMS.map(item => (
+                            {NAV_ITEMS.slice(2, 5).map(item => (
+                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                            ))}
+                        </div>
+
+                        {/* Hàng 3: 3 nút */}
+                        <div className="grid grid-cols-3 gap-3">
+                            {NAV_ITEMS.slice(5, 8).map(item => (
+                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                            ))}
+                        </div>
+
+                        {/* Hàng 4: 2 nút */}
+                        <div className="grid grid-cols-2 gap-3">
+                            {NAV_ITEMS.slice(8, 10).map(item => (
                                 <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
                             ))}
                         </div>
