@@ -4,7 +4,7 @@ import React, {useState, useRef, useCallback} from "react";
 import axios from "axios";
 // @ts-ignore
 import type {AxiosResponse} from "axios";
-import {X, Play, RotateCcw, CheckCircle2, XCircle, Loader2, ClipboardPaste, Package} from "lucide-react";
+import {X, Play, RotateCcw, CheckCircle2, XCircle, Loader2, ClipboardPaste, Package, ArrowLeft} from "lucide-react";
 
 const FontLoader = () => (
     <style>{`
@@ -247,8 +247,16 @@ export default function RebackTransfer() {
             <FontLoader/>
             <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
 
-                <div className="bg-white border-b border-slate-200 px-6 h-12 flex items-center justify-between flex-shrink-0">
+                <div className="bg-white border-b border-slate-200 px-5 h-12 flex items-center justify-between flex-shrink-0">
                     <div className="flex items-center gap-2.5">
+                        <button
+                            onClick={() => window.history.back()}
+                            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors text-sm font-semibold"
+                        >
+                            <ArrowLeft className="w-4 h-4"/>
+                            Quay lại
+                        </button>
+                        <div className="w-px h-5 bg-slate-200"/>
                         <div className="w-7 h-7 bg-amber-100 rounded-lg flex items-center justify-center">
                             <Package className="w-3.5 h-3.5 text-amber-600"/>
                         </div>
