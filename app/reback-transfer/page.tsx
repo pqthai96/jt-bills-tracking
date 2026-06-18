@@ -87,7 +87,7 @@ export default function RebackTransfer() {
     const [authToken, setAuthToken] = useState("");
 
     useEffect(() => {
-        const token = localStorage.getItem("authToken") ?? "";
+        const token = localStorage.getItem("YL_TOKEN") ?? "";
         setAuthToken(token);
     }, []);
 
