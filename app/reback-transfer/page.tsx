@@ -1,6 +1,6 @@
 "use client";
 
-import React, {useState, useRef, useCallback, JSX, useEffect} from "react";
+import React, {useState, useRef, useCallback, JSX} from "react";
 import axios from "axios";
 // @ts-ignore
 import type {AxiosResponse} from "axios";
@@ -64,17 +64,23 @@ function extractMsg(resp: AxiosResponse): string {
     return resp?.data?.msg || resp?.data?.message || resp?.data?.remark || (resp?.data?.success ? "Thành công" : "Thất bại");
 }
 
+function isSuccessMsg(resp: AxiosResponse): boolean {
+    const msg: string = resp?.data?.msg || resp?.data?.message || "";
+    return msg.includes("Thao tác thành công");
+}
+
 function isApi1Success(resp: AxiosResponse): boolean {
     const d = resp?.data;
     if (!d) return false;
+    // Ưu tiên check msg trước — API /add trả "1:Thao tác thành công"
+    if (isSuccessMsg(resp)) return true;
     if (typeof d.success === "boolean") return d.success;
     if (d.code !== undefined) return d.code === 0 || d.code === 200 || d.code === "0" || d.code === "200";
     return true;
 }
 
 function isApi2DKCHSuccess(resp: AxiosResponse): boolean {
-    const msg: string = resp?.data?.msg || resp?.data?.message || "";
-    return msg.includes("Thao tác thành công");
+    return isSuccessMsg(resp);
 }
 
 export default function RebackTransfer() {
@@ -84,12 +90,9 @@ export default function RebackTransfer() {
     const [isRunning, setIsRunning] = useState(false);
     const [done, setDone] = useState(0);
     const abortRef = useRef(false);
-    const [authToken, setAuthToken] = useState("");
 
-    useEffect(() => {
-        const token = localStorage.getItem("YL_TOKEN") ?? "";
-        setAuthToken(token);
-    }, []);
+    // Đọc token trực tiếp — không cần useEffect/useState
+    const authToken = typeof window !== "undefined" ? (localStorage.getItem("YL_TOKEN") ?? "") : "";
 
     const authHeaders = {
         authToken: authToken,
