@@ -1,6 +1,6 @@
 "use client";
 
-import React, {useState, useRef, useCallback} from "react";
+import React, {useState, useRef, useCallback, JSX, useEffect} from "react";
 import axios from "axios";
 // @ts-ignore
 import type {AxiosResponse} from "axios";
@@ -30,7 +30,6 @@ const FontLoader = () => (
     `}</style>
 );
 
-const AUTH_TOKEN = "287499d95aee4c2990d3a7e8047645c0";
 const BATCH_SIZE = 3;
 const RETRY_MAX = 2;
 const RETRY_DELAY_MS = 600;
@@ -85,9 +84,15 @@ export default function RebackTransfer() {
     const [isRunning, setIsRunning] = useState(false);
     const [done, setDone] = useState(0);
     const abortRef = useRef(false);
+    const [authToken, setAuthToken] = useState("");
+
+    useEffect(() => {
+        const token = localStorage.getItem("authToken") ?? "";
+        setAuthToken(token);
+    }, []);
 
     const authHeaders = {
-        authToken: AUTH_TOKEN,
+        authToken: authToken,
         lang: "VN",
         langType: "VN",
     };
