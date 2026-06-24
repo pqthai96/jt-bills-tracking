@@ -61,7 +61,8 @@ interface OrderData {
     lastIssueScanner: string;
     hasReturnTransfer: boolean;
     hasReturnRegistered: boolean;
-    hasDispatchedToday: boolean; // true nếu có "Quét phát hàng" trong ngày hôm nay
+    hasDispatchedToday: boolean;
+    hasGiaoLaiHang: boolean;
 }
 
 interface GroupedOrder {
@@ -163,17 +164,14 @@ function isTraditionalOrder(waybill: string): boolean {
 }
 
 // ─── Kiểm tra ngày hôm nay ────────────────────────────────────────────────────
-// scanTime từ API có thể là timestamp (ms) hoặc chuỗi "dd/MM/yyyy HH:mm:ss"
 function isScanToday(scanTime: string | number | null | undefined): boolean {
     if (!scanTime) return false;
     let dateObj: Date;
     if (typeof scanTime === 'number') {
         dateObj = new Date(scanTime);
     } else {
-        // Thử parse chuỗi "dd/MM/yyyy HH:mm:ss"
         const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(scanTime);
         if (ddmmyyyy) {
-            // Chuyển thành yyyy-MM-dd để Date parse đúng
             dateObj = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
         } else {
             dateObj = new Date(scanTime);
@@ -185,6 +183,42 @@ function isScanToday(scanTime: string | number | null | undefined): boolean {
         dateObj.getFullYear() === today.getFullYear() &&
         dateObj.getMonth() === today.getMonth() &&
         dateObj.getDate() === today.getDate()
+    );
+}
+
+// ─── Parse uploadTime thành timestamp ms ─────────────────────────────────────
+function parseUploadTime(uploadTime: string | number | null | undefined): number {
+    if (!uploadTime) return 0;
+    if (typeof uploadTime === 'number') return uploadTime;
+    const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/.exec(uploadTime);
+    if (ddmmyyyy) {
+        return new Date(
+            `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}T${ddmmyyyy[4]}:${ddmmyyyy[5]}:${ddmmyyyy[6]}`
+        ).getTime();
+    }
+    return new Date(uploadTime).getTime() || 0;
+}
+
+// ─── Kiểm tra GLH sau ĐKCH ───────────────────────────────────────────────────
+function detectGiaoLaiHangAfterDKCH(details: any[]): boolean {
+    if (!details || details.length === 0) return false;
+
+    const dkchEntries = details.filter(
+        (d: any) =>
+            (d.scanTypeName || '').includes('Đăng ký chuyển hoàn') ||
+            (d.scanTypeName || '').includes('Đăng ký CH lần 2')
+    );
+    if (dkchEntries.length === 0) return false;
+
+    const latestDKCHTime = Math.max(  // ← đổi Math.min thành Math.max
+        ...dkchEntries.map((d: any) => parseUploadTime(d.uploadTime))
+    );
+    if (!latestDKCHTime) return false;
+
+    return details.some(
+        (d: any) =>
+            (d.scanTypeName || '').includes('Giao lại hàng') &&
+            parseUploadTime(d.uploadTime) > latestDKCHTime
     );
 }
 
@@ -313,16 +347,11 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     const [availableDispatchCodes, setAvailableDispatchCodes] = useState<string[]>([]);
     const [selectedDispatchCode, setSelectedDispatchCode] = useState<string>("");
 
-    // null = tất cả, true = đã chuyển hoàn, false = chưa chuyển hoàn
     const [returnTransferFilter, setReturnTransferFilter] = useState<boolean | null>(null);
-
-    // null = tất cả, true = đã đăng ký hoàn, false = chưa đăng ký hoàn
     const [returnRegisteredFilter, setReturnRegisteredFilter] = useState<boolean | null>(null);
-
-    // null = tất cả, true = đã xuất kho hôm nay, false = chưa xuất kho hôm nay
     const [dispatchedTodayFilter, setDispatchedTodayFilter] = useState<boolean | null>(null);
+    const [giaoLaiHangFilter, setGiaoLaiHangFilter] = useState<boolean | null>(null);
 
-    // Tổng số đơn gốc (trước filter) — dùng để hiển thị "X / Y đơn"
     const [totalSourceCount, setTotalSourceCount] = useState<number>(bills.length);
 
     const detailCacheRef = useRef<Map<string, DetailCache>>(new Map());
@@ -331,7 +360,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
     const shouldShowLoading = !isBillTracking && (!bills || bills.length === 0);
 
-    // O(1) lookup map
     const groupedOrderMap = useMemo(() => {
         const m = new Map<string, GroupedOrder>();
         groupedOrders.forEach(o => m.set(o.waybill, o));
@@ -479,7 +507,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     const handleSelectCode = useCallback(async (code: string) => {
         if (code === selectedCodeRef.current) return;
         setIsTransitioning(true);
-        // Xóa cache cũ → fetch dữ liệu mới nhất
         detailCacheRef.current.delete(code);
         await prefetchDetail(code);
         setSelectedCode(code);
@@ -500,7 +527,11 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
     useEffect(() => {
         applyStatusFilter();
-    }, [selectedStatuses, groupedOrders, show028M08, showNon028M08, showTraditional, showEcommerce, selectedScanners, selectedDispatchCode, returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter]);
+    }, [
+        selectedStatuses, groupedOrders, show028M08, showNon028M08,
+        showTraditional, showEcommerce, selectedScanners, selectedDispatchCode,
+        returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter, giaoLaiHangFilter,
+    ]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
     const loadOrdersData = async (targetBills: string[] = bills) => {
@@ -510,7 +541,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         const startedAt = Date.now();
         setLoadProgress({total: targetBills.length, done: 0, failed: 0, startedAt});
 
-        // Reset filter state khi load mới
         setAvailableStatuses([]);
         setSelectedStatuses([]);
         setAvailableScanners([]);
@@ -520,6 +550,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
         setDispatchedTodayFilter(null);
+        setGiaoLaiHangFilter(null);
         setGroupedOrders([]);
         setOrdersData([]);
         setShowTraditional(true);
@@ -550,23 +581,28 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             ),
                         ])
                     );
+
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
                     const lastIssue = issueRecords[0];
                     const lastIssueScanner = lastIssue?.operatorName || lastIssue?.scanUserName || '';
+
                     const allDetails: any[] = trackingResp.data?.data?.[0]?.details ?? [];
                     const allScanTypes: string[] = allDetails.map((d: any) => d.scanTypeName || '');
+
                     const hasReturnTransfer = allScanTypes.some(s => s.includes('Đang chuyển hoàn'));
                     const hasReturnRegistered = allScanTypes.some(s => s.includes('Đăng ký chuyển hoàn'));
 
-                    // Kiểm tra đã "Quét phát hàng" trong ngày hôm nay chưa
                     const hasDispatchedToday = allDetails.some(
                         (d: any) =>
                             (d.scanTypeName || '').includes('Quét phát hàng') &&
                             isScanToday(d.scanTime)
                     );
 
+                    const hasGiaoLaiHang = detectGiaoLaiHangAfterDKCH(allDetails);
+
                     const IGNORED_STATUSES = ['Lịch sử cuộc gọi-phát'];
                     const realDetail = allDetails.find((d: any) => !IGNORED_STATUSES.includes(d.scanTypeName));
+
                     mockData.push({
                         waybill: bill,
                         terminalDispatchCode: orderResp.data.data.details.terminalDispatchCode || '',
@@ -576,6 +612,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         hasReturnTransfer,
                         hasReturnRegistered,
                         hasDispatchedToday,
+                        hasGiaoLaiHang,
                     });
                 } catch {
                     mockData.push({
@@ -587,6 +624,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                         hasReturnTransfer: false,
                         hasReturnRegistered: false,
                         hasDispatchedToday: false,
+                        hasGiaoLaiHang: false,
                     });
                     throw new Error("load failed after retries");
                 }
@@ -616,7 +654,6 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             setOrdersData(mockData);
             setTotalSourceCount(targetBills.length);
 
-            // Auto-select đơn đầu tiên sau khi load xong
             if (targetBills.length > 0) {
                 handleSelectCode(targetBills[0]);
             }
@@ -648,6 +685,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             if (returnTransferFilter !== null && od.hasReturnTransfer !== returnTransferFilter) return false;
             if (returnRegisteredFilter !== null && od.hasReturnRegistered !== returnRegisteredFilter) return false;
             if (dispatchedTodayFilter !== null && od.hasDispatchedToday !== dispatchedTodayFilter) return false;
+            if (giaoLaiHangFilter !== null && od.hasGiaoLaiHang !== giaoLaiHangFilter) return false;
             return true;
         });
         const waybills = filtered.map(o => o.waybill);
@@ -732,13 +770,12 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
         setDispatchedTodayFilter(null);
+        setGiaoLaiHangFilter(null);
         setSortMode("default");
     };
 
-    // ── Có data để show filter không ─────────────────────────────────────────
     const hasFilterData = availableStatuses.length > 0;
 
-    // ── Thống kê số đơn theo loại (để hiển thị badge) ────────────────────────
     const orderTypeCounts = useMemo(() => {
         const allWaybills = groupedOrders.map(o => o.waybill);
         const traditional = allWaybills.filter(w => isTraditionalOrder(w)).length;
@@ -772,8 +809,10 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
                 {/* ── Top bar ── */}
                 <div className="bg-white border-b border-slate-200 flex-shrink-0 z-20">
-                    <div className="px-5 h-10 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                    <div className="px-5 h-11 flex items-center gap-3">
+
+                        {/* ── Left ── */}
+                        <div className="flex items-center gap-3 flex-shrink-0">
                             <button
                                 onClick={() => window.history.back()}
                                 className="flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors text-sm font-semibold"
@@ -792,7 +831,119 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        {/* ── Center: Loại đơn + Mạng lưới + Mã đoạn + Người quét KVĐ ── */}
+                        <div className="flex-1 flex items-center justify-center overflow-hidden">
+                            {hasFilterData && (
+                                <div className="flex items-center gap-2 border-2 border-slate-200 rounded-xl px-2 py-1 bg-slate-50 shadow-sm flex-shrink-0">
+                                    <button
+                                        onClick={() => setShowTraditional(!showTraditional)}
+                                        className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            showTraditional
+                                                ? 'bg-teal-100 text-teal-800 border-teal-200'
+                                                : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
+                                        }`}
+                                    >
+                                        TRUYỀN THỐNG
+                                    </button>
+                                    <button
+                                        onClick={() => setShowEcommerce(!showEcommerce)}
+                                        className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            showEcommerce
+                                                ? 'bg-blue-100 text-blue-800 border-blue-200'
+                                                : 'bg-white border-slate-200 text-slate-400 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700'
+                                        }`}
+                                    >
+                                        ĐƠN SÀN
+                                    </button>
+                                    <div className="w-px h-4 bg-slate-300"/>
+                                    <button
+                                        onClick={() => setShow028M08(!show028M08)}
+                                        className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            show028M08
+                                                ? 'bg-teal-100 text-teal-800 border-teal-200'
+                                                : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
+                                        }`}
+                                    >
+                                        028M08
+                                    </button>
+                                    <button
+                                        onClick={() => setShowNon028M08(!showNon028M08)}
+                                        className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            showNon028M08
+                                                ? 'bg-teal-100 text-teal-800 border-teal-200'
+                                                : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
+                                        }`}
+                                    >
+                                        Khác
+                                    </button>
+
+                                    {/* Mã đoạn */}
+                                    {availableDispatchCodes.length > 0 && (
+                                        <>
+                                            <div className="w-px h-4 bg-slate-300"/>
+                                            <div className="flex items-center gap-0.5">
+                                                <select
+                                                    value={selectedDispatchCode}
+                                                    onChange={e => setSelectedDispatchCode(e.target.value)}
+                                                    className={`text-[11px] font-semibold border rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-200 transition-all cursor-pointer ${
+                                                        selectedDispatchCode
+                                                            ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                                            : 'bg-white border-slate-200 text-slate-600'
+                                                    }`}
+                                                >
+                                                    <option value="">MÃ ĐOẠN ({availableDispatchCodes.length})</option>
+                                                    {availableDispatchCodes.map(code => (
+                                                        <option key={code} value={code}>{code}</option>
+                                                    ))}
+                                                </select>
+                                                {selectedDispatchCode && (
+                                                    <button
+                                                        onClick={() => setSelectedDispatchCode("")}
+                                                        className="text-amber-400 hover:text-amber-600 transition-colors"
+                                                    >
+                                                        <X className="w-3 h-3"/>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {/* Người quét KVĐ */}
+                                    {availableScanners.length > 0 && (
+                                        <>
+                                            <div className="w-px h-4 bg-slate-300"/>
+                                            <div className="flex items-center gap-0.5">
+                                                <select
+                                                    value={selectedScanners[0] ?? ""}
+                                                    onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
+                                                    className={`text-[11px] font-semibold border rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-teal-200 transition-all cursor-pointer ${
+                                                        selectedScanners.length > 0
+                                                            ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                                            : 'bg-white border-slate-200 text-slate-600'
+                                                    }`}
+                                                >
+                                                    <option value="">NGƯỜI QUÉT KVĐ ({availableScanners.length})</option>
+                                                    {availableScanners.map(name => (
+                                                        <option key={name} value={name}>{name}</option>
+                                                    ))}
+                                                </select>
+                                                {selectedScanners.length > 0 && (
+                                                    <button
+                                                        onClick={() => setSelectedScanners([])}
+                                                        className="text-teal-400 hover:text-teal-600 transition-colors"
+                                                    >
+                                                        <X className="w-3 h-3"/>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ── Right ── */}
+                        <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
                             <span
                                 className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
                                 {hasFilterData
@@ -850,119 +1001,15 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             </div>
                         </div>
 
-                        {/* Hàng 2 */}
+                        {/* Hàng 2: Chuyển hoàn + Đăng ký hoàn + Xuất kho + GLH + Reset */}
                         <div className="flex flex-wrap items-stretch gap-2">
-
-                            {/* Loại đơn */}
-                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
-
-                                <button
-                                    onClick={() => setShowTraditional(!showTraditional)}
-                                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
-                                        showTraditional
-                                            ?  'bg-teal-100 text-teal-800 border-teal-200'
-                                            : 'bg-white border-slate-200 text-slate-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
-                                    }`}
-                                >
-                                    TRUYỀN THỐNG
-                                </button>
-
-                                <button
-                                    onClick={() => setShowEcommerce(!showEcommerce)}
-                                    className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
-                                        showEcommerce
-                                            ? 'bg-blue-100 text-blue-800 border-blue-200'
-                                            : 'bg-white border-slate-200 text-slate-500 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700'
-                                    }`}
-                                >
-                                    ĐƠN SÀN
-                                </button>
-                            </div>
-
-                            {/* Mã đoạn */}
-                            {availableDispatchCodes.length > 0 && (
-                                <div className="flex items-center gap-1.5 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
-                                    <select
-                                        value={selectedDispatchCode}
-                                        onChange={e => setSelectedDispatchCode(e.target.value)}
-                                        className={`text-xs font-semibold border rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-200 transition-all cursor-pointer ${
-                                            selectedDispatchCode
-                                                ? 'bg-amber-50 border-amber-200 text-amber-800'
-                                                : 'bg-white border-slate-200 text-slate-600'
-                                        }`}
-                                    >
-                                        <option value="">MÃ ĐOẠN ({availableDispatchCodes.length})</option>
-                                        {availableDispatchCodes.map(code => (
-                                            <option key={code} value={code}>{code}</option>
-                                        ))}
-                                    </select>
-
-                                    {selectedDispatchCode && (
-                                        <button
-                                            onClick={() => setSelectedDispatchCode("")}
-                                            className="text-amber-400 hover:text-amber-600 transition-colors"
-                                        >
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Người quét KVĐ */}
-                            {availableScanners.length > 0 && (
-                                <div className="flex items-center gap-1.5 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
-                                    <select
-                                        value={selectedScanners[0] ?? ""}
-                                        onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
-                                        className={`text-xs font-semibold border rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-teal-200 transition-all cursor-pointer ${
-                                            selectedScanners.length > 0
-                                                ? 'bg-teal-50 border-teal-200 text-teal-800'
-                                                : 'bg-white border-slate-200 text-slate-600'
-                                        }`}
-                                    >
-                                        <option value="">NGƯỜI QUÉT KVĐ ({availableScanners.length})</option>
-                                        {availableScanners.map(name => (
-                                            <option key={name} value={name}>{name}</option>
-                                        ))}
-                                    </select>
-
-                                    {selectedScanners.length > 0 && (
-                                        <button
-                                            onClick={() => setSelectedScanners([])}
-                                            className="text-teal-400 hover:text-teal-600 transition-colors"
-                                        >
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Mạng lưới */}
-                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
-                                {[
-                                    { key: 'show028M08', label: '028M08', state: show028M08, set: setShow028M08 },
-                                    { key: 'showNon028M08', label: 'Khác', state: showNon028M08, set: setShowNon028M08 },
-                                ].map(opt => (
-                                    <button
-                                        key={opt.key}
-                                        onClick={() => opt.set(!opt.state)}
-                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
-                                            opt.state
-                                                ? 'bg-teal-100 text-teal-800 border-teal-200'
-                                                : 'bg-white border-slate-200 text-slate-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
-                                        }`}
-                                    >
-                                        {opt.label}
-                                    </button>
-                                ))}
-                            </div>
 
                             {/* Chuyển hoàn */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-                                    { value: true, label: 'Đã chuyển hoàn', active: 'bg-rose-100 text-rose-800 border-rose-200' },
-                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                                    {value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200'},
+                                    {value: true, label: 'Đã chuyển hoàn', active: 'bg-rose-100 text-rose-800 border-rose-200'},
+                                    {value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-100 text-emerald-800 border-emerald-200'},
                                 ].map(opt => (
                                     <button
                                         key={String(opt.value)}
@@ -981,9 +1028,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             {/* Đăng ký hoàn */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-                                    { value: true, label: 'Đã ĐKCH', active: 'bg-amber-100 text-amber-800 border-amber-200' },
-                                    { value: false, label: 'Chưa ĐKCH', active: 'bg-slate-200 text-slate-700 border-slate-300' },
+                                    {value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200'},
+                                    {value: true, label: 'Đã ĐKCH', active: 'bg-amber-100 text-amber-800 border-amber-200'},
+                                    {value: false, label: 'Chưa ĐKCH', active: 'bg-slate-200 text-slate-700 border-slate-300'},
                                 ].map(opt => (
                                     <button
                                         key={String(opt.value)}
@@ -1002,9 +1049,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                             {/* Xuất kho */}
                             <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
                                 {[
-                                    { value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-                                    { value: true, label: 'Đã xuất kho', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-                                    { value: false, label: 'Chưa xuất kho', active: 'bg-amber-100 text-amber-800 border-amber-200' },
+                                    {value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200'},
+                                    {value: true, label: 'Đã xuất kho', active: 'bg-emerald-100 text-emerald-800 border-emerald-200'},
+                                    {value: false, label: 'Chưa xuất kho', active: 'bg-amber-100 text-amber-800 border-amber-200'},
                                 ].map(opt => (
                                     <button
                                         key={String(opt.value)}
@@ -1020,12 +1067,33 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                 ))}
                             </div>
 
+                            {/* Giao lại hàng sau ĐKCH */}
+                            <div className="flex items-center gap-1 border border-blue-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                {[
+                                    {value: null, label: 'Tất cả', active: 'bg-indigo-100 text-indigo-800 border-indigo-200'},
+                                    {value: true, label: 'Đã có GLH sau ĐKCH', active: 'bg-violet-100 text-violet-800 border-violet-200'},
+                                    {value: false, label: 'Chưa có GLH sau ĐKCH', active: 'bg-orange-100 text-orange-800 border-orange-200'},
+                                ].map(opt => (
+                                    <button
+                                        key={String(opt.value)}
+                                        onClick={() => setGiaoLaiHangFilter(opt.value)}
+                                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            giaoLaiHangFilter === opt.value
+                                                ? opt.active
+                                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+
                             {/* Reset */}
                             <button
                                 onClick={clearFilters}
                                 className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 bg-white hover:bg-rose-50 px-3 py-1.5 rounded-xl transition-all duration-200 hover:shadow-md active:scale-95 ml-auto self-stretch shadow-sm"
                             >
-                                <RotateCcw className="w-3 h-3" />
+                                <RotateCcw className="w-3 h-3"/>
                                 Reset
                             </button>
 
