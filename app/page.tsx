@@ -64,7 +64,7 @@ const NAV_ITEMS = [
     },
     {
         href: "/bus-warehouse",
-        label: "Xuất kho",
+        label: "Xuất kho tổng hợp",
         icon: FileText,
         bg: "bg-emerald-50",
         iconBg: "bg-emerald-100",
