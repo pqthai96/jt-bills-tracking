@@ -69,7 +69,7 @@ function extractMsg(resp: AxiosResponse): string {
 
 function isSuccessMsg(resp: AxiosResponse): boolean {
     const msg: string = resp?.data?.msg || resp?.data?.message || "";
-    return msg.includes("Thao tác thành công");
+    return msg.includes("Yêu cầu thành công");
 }
 
 function isComplaintMsg(msg: string): boolean {
