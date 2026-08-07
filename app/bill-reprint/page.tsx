@@ -191,7 +191,11 @@ function BillLabel({
                             {detail?.terminalDispatchCode ? detail.terminalDispatchCode.split('-')[1] : "—"}
                         </div>
                         <div className="border-b border-black py-[2px] pr-2 text-[18px] font-bold flex justify-end">
-                            <span>{detail?.terminalDispatchCode?.slice(-3) || "—"}</span>
+                            <span>
+                                {detail?.terminalDispatchCode && (detail.terminalDispatchCode.match(/-/g) || []).length === 2
+                                    ? detail.terminalDispatchCode.slice(-3)
+                                    : "\u00A0"}
+                            </span>
                         </div>
                         <div className="flex-1 flex items-center justify-center p-2">
                             <QRCode value={trackingNumber} size={70}/>
