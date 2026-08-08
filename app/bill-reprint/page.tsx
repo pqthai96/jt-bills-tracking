@@ -616,7 +616,7 @@ export default function BillReprint() {
         html, body { margin: 0; padding: 0; background: white; }
         .bill-page { width: 72mm; height: 80mm; overflow: hidden; position: relative; page-break-after: always; break-after: page; }
         .bill-page:last-child { page-break-after: avoid; break-after: avoid; }
-        .scale-inner { transform: scale(0.705); transform-origin: top left; width: 378px; }
+        .scale-inner { transform: scale(0.695); transform-origin: top left; width: 378px; }
     </style>
 </head><body>
 ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div class="scale-inner">${html}</div></div>`).join("\n")}
