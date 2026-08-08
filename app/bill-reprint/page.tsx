@@ -178,7 +178,7 @@ function BillLabel({
                         {/* RECEIVER ADDRESS */}
                         <div className="px-2 pb-2">
                             <div className="font-bold text-[8px]">
-                                <p className="text-[16px]">{detail?.receiverDetailedAddress || ""}</p>
+                                <p className="text-[15px]">{detail?.receiverDetailedAddress || ""}</p>
                                 <p>{receiverAddressLine2}</p>
                                 <p>{detail?.receiverProvinceName || ""}</p>
                             </div>
@@ -271,6 +271,13 @@ function BillLabelNew({
     const barcodeRef = useRef<SVGSVGElement>(null);
     const {trackingNumber, detail} = data;
 
+    // Mã dài (không phải 12 số) thì thu nhỏ font chữ 2 mã dọc cạnh QR cho vừa khung,
+    // đồng thời đẩy ra xa QR hơn một chút để khỏi sát nhau. Mã 12 số giữ nguyên như cũ.
+    const isLongCode = !!trackingNumber && trackingNumber.length > 12;
+    const sideCodeFontSize = isLongCode ? "8px" : "10px";
+    const sideCodeLeftOffset = isLongCode ? "-42px" : "-32px";
+    const sideCodeRightOffset = isLongCode ? "-40px" : "-30px";
+
     // Parse dispatch code parts: e.g. "805-A028M08-029"
     const dispatchParts = detail?.terminalDispatchCode?.split('-') ?? [];
     const dispatchTop = dispatchParts[0] || "\u00A0";
@@ -295,13 +302,34 @@ function BillLabelNew({
 
     useEffect(() => {
         if (barcodeRef.current && trackingNumber) {
+            // Mã càng dài (chữ+số) thì bar càng mảnh lại để hạn chế độ rộng vẽ ra ban đầu.
+            const barWidth = trackingNumber.length > 12
+                ? Math.max(0.9, 1.8 * (12 / trackingNumber.length))
+                : 1.8;
+
             JsBarcode(barcodeRef.current, trackingNumber, {
                 format: "CODE128",
-                width: 1.8,
+                width: barWidth,
                 height: 60,
                 displayValue: false,
                 margin: 0,
             });
+
+            // JsBarcode không tự gán viewBox, nên CSS width:100% không co giãn được
+            // nội dung thật sự -> barcode dài sẽ bị tràn ra ngoài khung.
+            // Gán viewBox theo kích thước vẽ thực tế để scale luôn vừa khít khung chứa.
+            try {
+                const svg = barcodeRef.current;
+                const bbox = svg.getBBox();
+                if (bbox.width > 0 && bbox.height > 0) {
+                    svg.setAttribute("viewBox", `0 0 ${bbox.width} ${bbox.height}`);
+                    svg.removeAttribute("width");
+                    svg.removeAttribute("height");
+                    svg.setAttribute("preserveAspectRatio", "none");
+                }
+            } catch (e) {
+                // getBBox có thể lỗi nếu SVG chưa render trong DOM (an toàn bỏ qua)
+            }
         }
     }, [trackingNumber]);
 
@@ -321,14 +349,12 @@ function BillLabelNew({
                     <div className="w-[40%] border-r-2 border-black h-[70px]"/>
 
                     {/* Barcode bên phải */}
-                    <div className="w-[60%] flex flex-col items-center justify-center pt-1">
-                        <div className="h-9 overflow-hidden">
-                            <div className="w-full">
-                                <svg ref={barcodeRef} className="w-full"/>
-                            </div>
+                    <div className="w-[60%] flex flex-col items-center justify-center pt-1 px-3">
+                        <div className="w-full h-9 overflow-hidden">
+                            <svg ref={barcodeRef} className="block w-full h-full"/>
                         </div>
 
-                        <div className="text-[10px] font-bold tracking-widest mt-1">
+                        <div className="text-[12px] font-bold tracking-widest mt-1">
                             {trackingNumber}
                         </div>
                     </div>
@@ -342,7 +368,7 @@ function BillLabelNew({
 
                         {/* SENDER */}
                         <div className="border-b-2 border-black px-1 py-1">
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-0.5">
                                 <span className="text-[9px] text-gray-600">Người gửi :</span>
                                 <span className="font-bold text-[11px]">
                         {detail?.sellerName || detail?.senderName || "—"},&nbsp;
@@ -357,34 +383,34 @@ function BillLabelNew({
                         </div>
 
                         {/* RECEIVER */}
-                        <div className="border-b-2 border-black px-1 py-1">
-                            <div className="flex flex-col gap-1">
+                        <div className="border-b-2 border-black px-1 py-0.5">
+                            <div className="flex flex-col gap-0.5">
                                 <span className="text-[9px] text-gray-600">Người nhận :</span>
                                 <span className="font-bold text-[12px]">
-                        {detail?.receiverName || "—"},&nbsp;
+                                    {detail?.receiverName || "—"},&nbsp;
                                     <span className="font-normal text-[10px]">
-                            {detail?.receiverMobilePhone || ""}
-                        </span>
-                    </span>
+                                        {detail?.receiverMobilePhone || ""}
+                                    </span>
+                                </span>
                             </div>
 
-                            <div className="font-bold text-[16px] leading-tight mt-[2px]">
+                            <div className="font-bold text-[15px] line-clamp-2 leading-tight mt-[2px]">
                                 {receiverAddress}
                             </div>
                         </div>
 
                         {/* RECEIVER AREA */}
-                        <div className="border-b-2 border-black px-1 py-1 text-[9px]">
+                        <div className="border-b-2 border-black px-1 py-0.5 text-[9px]">
                             <span>{receiverArea}</span>
                         </div>
 
                         {/* RECEIVER PROVINCE */}
-                        <div className="border-b-2 border-black px-1 py-1 text-[9px] font-bold">
+                        <div className="border-b-2 border-black px-1 py-0.5 text-[9px] font-bold">
                             {detail?.receiverProvinceName || ""}
                         </div>
 
                         {/* GOODS INFO */}
-                        <div className="border-b-2 border-black px-1 py-1">
+                        <div className="border-b-2 border-black px-1 py-0.5">
                             <div className="flex justify-between text-[9px]">
                                 <span className="font-bold">Nội dung hàng hóa :</span>
                                 <span className="font-bold">
@@ -447,17 +473,14 @@ function BillLabelNew({
                             </div>
                         </div>
 
-                        {/* Empty box */}
-                        {receiverAddress.length >= 25 ? (
-                            <div className="border-b-2 border-black p-4 text-[16px] font-bold"></div>
-                        ) : (<></>)}
-
                         {/* QR Code */}
                         <div className="flex-1 relative flex items-center justify-center border-black">
 
                             {/* Mã vận đơn bên trái (xoay dọc) */}
                             <div
-                                className="absolute left-[-32px] top-1/2 -translate-y-1/2 rotate-[90deg] text-[10px] tracking-widest">
+                                className="absolute top-1/2 -translate-y-1/2 rotate-[90deg] tracking-widest whitespace-nowrap"
+                                style={{fontSize: sideCodeFontSize, left: sideCodeLeftOffset}}
+                            >
                                 {trackingNumber}
                             </div>
 
@@ -468,7 +491,9 @@ function BillLabelNew({
 
                             {/* Mã vận đơn bên phải (xoay dọc) */}
                             <div
-                                className="absolute right-[-30px] top-1/2 -translate-y-1/2 rotate-90 text-[10px] tracking-widest">
+                                className="absolute top-1/2 -translate-y-1/2 rotate-90 tracking-widest whitespace-nowrap"
+                                style={{fontSize: sideCodeFontSize, right: sideCodeRightOffset}}
+                            >
                                 {trackingNumber}
                             </div>
                         </div>
@@ -760,7 +785,7 @@ ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div clas
                                                                     : "text-slate-400 hover:text-slate-600"
                                                             }`}
                                                         >
-                                                            Mẫu cũ
+                                                            Mẫu Tiktok
                                                         </button>
                                                         <button
                                                             type="button"
@@ -771,7 +796,7 @@ ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div clas
                                                                     : "text-slate-400 hover:text-slate-600"
                                                             }`}
                                                         >
-                                                            Mẫu mới
+                                                            Mẫu thường
                                                         </button>
                                                     </div>
                                                 )}
