@@ -271,12 +271,12 @@ function BillLabelNew({
     const barcodeRef = useRef<SVGSVGElement>(null);
     const {trackingNumber, detail} = data;
 
-    // Mã dài (không phải 12 số) thì thu nhỏ font chữ 2 mã dọc cạnh QR cho vừa khung,
-    // đồng thời đẩy ra xa QR hơn một chút để khỏi sát nhau. Mã 12 số giữ nguyên như cũ.
-    const isLongCode = !!trackingNumber && trackingNumber.length > 12;
-    const sideCodeFontSize = isLongCode ? "8px" : "10px";
-    const sideCodeLeftOffset = isLongCode ? "-42px" : "-32px";
-    const sideCodeRightOffset = isLongCode ? "-40px" : "-30px";
+    const isJntMp = !!trackingNumber && trackingNumber.startsWith("JNTMP");
+    const isJnt = !!trackingNumber && !isJntMp && trackingNumber.startsWith("JNT");
+
+    const sideCodeFontSize = isJntMp ? "8px" : "10px";
+    const sideCodeLeftOffset = isJntMp ? "-42px" : isJnt ? "-44px" : "-32px";
+    const sideCodeRightOffset = isJntMp ? "-40px" : isJnt ? "-40px" : "-30px";
 
     // Parse dispatch code parts: e.g. "805-A028M08-029"
     const dispatchParts = detail?.terminalDispatchCode?.split('-') ?? [];
