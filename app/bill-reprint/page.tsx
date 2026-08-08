@@ -59,6 +59,9 @@ interface BillData {
     error?: string;
 }
 
+// Loại bill để render/in
+type BillType = "old" | "new";
+
 // ─── Helper: inline computed styles ──────────────────────────────────────────
 function inlineComputedStyles(original: Element, clone: Element) {
     const computed = window.getComputedStyle(original);
@@ -73,7 +76,7 @@ function inlineComputedStyles(original: Element, clone: Element) {
     });
 }
 
-// ─── Helper: determine bill type ─────────────────────────────────────────────
+// ─── Helper: determine bill type (mặc định tự động, dùng khi không có override) ─
 function isOldBillType(trackingNumber: string): boolean {
     return /^8[567]/.test(trackingNumber);
 }
@@ -270,9 +273,9 @@ function BillLabelNew({
 
     // Parse dispatch code parts: e.g. "805-A028M08-029"
     const dispatchParts = detail?.terminalDispatchCode?.split('-') ?? [];
-    const dispatchTop = dispatchParts[0] || "—";
-    const dispatchMid = dispatchParts[1] || "—";
-    const dispatchBot = dispatchParts[2] || "—";
+    const dispatchTop = dispatchParts[0] || "\u00A0";
+    const dispatchMid = dispatchParts[1] || "\u00A0";
+    const dispatchBot = dispatchParts[2] || "\u00A0";
 
     const senderAddress = [
         detail?.senderDetailedAddress,
@@ -484,6 +487,11 @@ export default function BillReprint() {
     const [bills, setBills] = useState<BillData[]>([]);
     const [isLoading, setIsLoading] = useState(false);
 
+    // Override loại bill (cũ/mới) do người dùng chọn thủ công cho từng dòng.
+    // Key = `${index}-${trackingNumber}` (giống key dùng cho billRefs).
+    // Nếu dòng nào không có trong map này -> dùng logic tự động isOldBillType() như cũ.
+    const [billTypeOverride, setBillTypeOverride] = useState<Record<string, BillType>>({});
+
     const billRefs = useRef<Map<string, React.RefObject<HTMLDivElement>>>(new Map());
 
     const getRef = (key: string): React.RefObject<HTMLDivElement> => {
@@ -492,6 +500,17 @@ export default function BillReprint() {
             billRefs.current.set(key, React.createRef<HTMLDivElement>());
         }
         return billRefs.current.get(key)!;
+    };
+
+    // Trả về loại bill sẽ dùng để render/in cho 1 dòng: override nếu có, không thì tự động như cũ.
+    const getBillType = (key: string, trackingNumber: string): BillType => {
+        const override = billTypeOverride[key];
+        if (override) return override;
+        return isOldBillType(trackingNumber) ? "old" : "new";
+    };
+
+    const setOverrideForKey = (key: string, type: BillType) => {
+        setBillTypeOverride((prev) => ({...prev, [key]: type}));
     };
 
     useEffect(() => {
@@ -526,6 +545,7 @@ export default function BillReprint() {
         setIsLoading(true);
         setBills(trackingList.map((t) => ({trackingNumber: t, status: "loading"})));
         billRefs.current.clear();
+        setBillTypeOverride({});
 
         const results = await Promise.allSettled(
             trackingList.map((waybill) =>
@@ -596,7 +616,7 @@ export default function BillReprint() {
         html, body { margin: 0; padding: 0; background: white; }
         .bill-page { width: 72mm; height: 80mm; overflow: hidden; position: relative; page-break-after: always; break-after: page; }
         .bill-page:last-child { page-break-after: avoid; break-after: avoid; }
-        .scale-inner { transform: scale(0.695); transform-origin: top left; width: 378px; }
+        .scale-inner { transform: scale(0.705); transform-origin: top left; width: 378px; }
     </style>
 </head><body>
 ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div class="scale-inner">${html}</div></div>`).join("\n")}
@@ -712,37 +732,69 @@ ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div clas
 
                             {bills.map((bill, index) => {
                                 const key = `${index}-${bill.trackingNumber}`;
-                                const useOldBill = isOldBillType(bill.trackingNumber);
+                                const billType = getBillType(key, bill.trackingNumber);
 
                                 return (
                                     <div key={key}
                                          className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                                         {/* Card header */}
                                         <div
-                                            className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
+                                            className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-2 min-w-0">
                                                 <span className="text-xs text-slate-400 font-mono">#{index + 1}</span>
                                                 <span
-                                                    className="text-sm font-bold text-slate-700 font-mono">{bill.trackingNumber}</span>
+                                                    className="text-sm font-bold text-slate-700 font-mono truncate">{bill.trackingNumber}</span>
                                             </div>
-                                            {bill.status === "loading" && (
-                                                <span
-                                                    className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                                                    <Loader2 className="w-3 h-3 animate-spin"/>Đang tải
-                                                </span>
-                                            )}
-                                            {bill.status === "success" && (
-                                                <span
-                                                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-                                                    <CheckCircle className="w-3 h-3"/>OK
-                                                </span>
-                                            )}
-                                            {bill.status === "error" && (
-                                                <span
-                                                    className="flex items-center gap-1.5 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-full">
-                                                    <XCircle className="w-3 h-3"/>Lỗi
-                                                </span>
-                                            )}
+
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                {/* Toggle chọn loại bill — chỉ hiện khi có dữ liệu để render */}
+                                                {bill.status === "success" && (
+                                                    <div
+                                                        className="flex items-center bg-slate-100 rounded-full p-0.5 text-[11px] font-semibold">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setOverrideForKey(key, "old")}
+                                                            className={`px-2.5 py-1 rounded-full transition-all ${
+                                                                billType === "old"
+                                                                    ? "bg-white text-slate-800 shadow-sm"
+                                                                    : "text-slate-400 hover:text-slate-600"
+                                                            }`}
+                                                        >
+                                                            Mẫu cũ
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setOverrideForKey(key, "new")}
+                                                            className={`px-2.5 py-1 rounded-full transition-all ${
+                                                                billType === "new"
+                                                                    ? "bg-white text-slate-800 shadow-sm"
+                                                                    : "text-slate-400 hover:text-slate-600"
+                                                            }`}
+                                                        >
+                                                            Mẫu mới
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {bill.status === "loading" && (
+                                                    <span
+                                                        className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+                                                        <Loader2 className="w-3 h-3 animate-spin"/>Đang tải
+                                                    </span>
+                                                )}
+                                                {bill.status === "success" && (
+                                                    <span
+                                                        className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                                                        <CheckCircle className="w-3 h-3"/>OK
+                                                    </span>
+                                                )}
+                                                {bill.status === "error" && (
+                                                    <span
+                                                        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-full">
+                                                        <XCircle className="w-3 h-3"/>Lỗi
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
 
                                         {/* Card body */}
@@ -764,7 +816,7 @@ ${billPages.map((html, i) => `<div class="bill-page" data-index="${i}"><div clas
                                                 </div>
                                             )}
                                             {bill.status === "success" && (
-                                                useOldBill
+                                                billType === "old"
                                                     ? <BillLabel data={bill} billRef={getRef(key)}/>
                                                     : <BillLabelNew data={bill} billRef={getRef(key)}/>
                                             )}

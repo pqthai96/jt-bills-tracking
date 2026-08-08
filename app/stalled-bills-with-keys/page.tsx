@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Copy, Search, Filter, RotateCcw, Package,
     Clock, CheckCircle, AlertCircle,
     ChevronLeft, ChevronRight, Square, CheckSquare,
-    ArrowLeft, Zap
+    ArrowLeft, Zap, Timer
 } from 'lucide-react';
 
 import {
@@ -44,8 +44,63 @@ const FontLoader = () => (
             to   { opacity: 1; transform: translateY(0); }
         }
         .animate-fade-in { animation: fade-in 0.25s ease-out; }
+
+        @keyframes progress-shimmer {
+            0%   { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+        .progress-shimmer {
+            background: linear-gradient(
+                90deg,
+                #4338ca 0%,
+                #6366f1 40%,
+                #818cf8 50%,
+                #6366f1 60%,
+                #4338ca 100%
+            );
+            background-size: 200% auto;
+            animation: progress-shimmer 1.8s linear infinite;
+        }
     `}</style>
 );
+
+// ─── Tiến độ tải dữ liệu ─────────────────────────────────────────────────────
+interface LoadProgress {
+    total: number;
+    done: number;
+}
+
+// ─── Progress bar tải dữ liệu ────────────────────────────────────────────────
+function LoadProgressBar({ progress }: { progress: LoadProgress }) {
+    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+    return (
+        <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm p-5 animate-fade-in">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-1.5">
+                <div className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                    <span className="text-sm font-bold text-indigo-700">
+                        Đang tải dữ liệu...
+                    </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-indigo-500 font-semibold">
+                    <Timer className="w-3.5 h-3.5" />
+                    {pct >= 100 ? (
+                        <span className="text-emerald-600">Hoàn tất!</span>
+                    ) : (
+                        <span className="text-indigo-700">{pct}%</span>
+                    )}
+                </div>
+            </div>
+            <div className="h-2 bg-indigo-100 rounded-full overflow-hidden">
+                <div
+                    className="h-full rounded-full transition-all duration-300 ease-out progress-shimmer"
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+        </div>
+    );
+}
 
 function Page() {
     const router = useRouter();
@@ -73,6 +128,9 @@ function Page() {
 
     const [currentPage, setCurrentPage] = useState<number>(DEFAULT_PAGE);
     const [itemsPerPage, setItemsPerPage] = useState<number>(DEFAULT_ITEMS_PER_PAGE);
+
+    // ── Tiến độ tải dữ liệu ──
+    const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
 
     const totalPages   = Math.ceil(filteredBills.length / itemsPerPage);
     const startIndex   = (currentPage - 1) * itemsPerPage;
@@ -111,9 +169,12 @@ function Page() {
         if (!validation.isValid) { setDateError(validation.error); return; }
 
         setLoading(true); setLoadingTerminalCodes(true);
+        setLoadProgress(null);
         try {
             const apiService = createApiService(authToken);
-            const data = await apiService.getAllBillsData(startTime, endTime);
+            const data = await apiService.getAllBillsData(startTime, endTime, (done, total) => {
+                setLoadProgress({ done, total });
+            });
             setAllBills(data.allBills);
             setAllBillsWithStatus(data.billsWithStatus);
             setBillsWithTerminalCode(data.billsWithTerminalCodes);
@@ -128,6 +189,7 @@ function Page() {
             setSelectedTerminalPrefixes([]);
         } finally {
             setLoading(false); setLoadingTerminalCodes(false);
+            setLoadProgress(null);
         }
     };
 
@@ -266,13 +328,17 @@ function Page() {
 
                     {/* ── Loading ── */}
                     {loading && (
-                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
-                            <div className="w-10 h-10 border-3 border-slate-200 border-t-indigo-500 rounded-full animate-spin" />
-                            <div className="text-center">
-                                <p className="font-semibold text-slate-700">Đang tải dữ liệu...</p>
-                                {loadingTerminalCodes && <p className="text-xs text-indigo-500 mt-1">Đang tải thông tin mã đoạn...</p>}
+                        loadProgress ? (
+                            <LoadProgressBar progress={loadProgress} />
+                        ) : (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
+                                <div className="w-10 h-10 border-[3px] border-slate-200 border-t-indigo-500 rounded-full animate-spin" />
+                                <div className="text-center">
+                                    <p className="font-semibold text-slate-700">Đang tải dữ liệu...</p>
+                                    {loadingTerminalCodes && <p className="text-xs text-indigo-500 mt-1">Đang tải thông tin mã đoạn...</p>}
+                                </div>
                             </div>
-                        </div>
+                        )
                     )}
 
                     {/* ── Stats ── */}

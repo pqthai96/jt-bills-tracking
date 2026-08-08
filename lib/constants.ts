@@ -1,7 +1,7 @@
 // API Endpoints
 export const API_ENDPOINTS = {
-    SUM_DATA: "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_sum",
-    DETAIL_DATA: "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/op_taking_monitor_detail",
+    SUM_DATA: "https://jmsgw.jtexpress.vn/networkmanagement/omsWaybill/shippingWaybillListCount",
+    DETAIL_DATA: "https://jmsgw.jtexpress.vn/networkmanagement/omsWaybill/shippingWaybillList",
     STATUS_DATA: "https://jmsgw.jtexpress.vn/operatingplatform/wayBillStatusNew/listPage",
     ORDER_DETAIL: "https://jmsgw.jtexpress.vn/operatingplatform/order/getOrderDetail"
 } as const;

@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Copy, Search, Filter, RotateCcw, Package,
     Clock, CheckCircle, AlertCircle,
-    ChevronLeft, ChevronRight, Square, CheckSquare, ArrowLeft, Truck
+    ChevronLeft, ChevronRight, Square, CheckSquare, ArrowLeft, Truck, Check, Timer
 } from 'lucide-react';
 
 import {
@@ -41,8 +41,107 @@ const FontLoader = () => (
             to   { opacity: 1; transform: translateY(0); }
         }
         .animate-fade-in { animation: fade-in 0.25s ease-out; }
+
+        @keyframes progress-shimmer {
+            0%   { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+        .progress-shimmer {
+            background: linear-gradient(
+                90deg,
+                #6d28d9 0%,
+                #8b5cf6 40%,
+                #a78bfa 50%,
+                #8b5cf6 60%,
+                #6d28d9 100%
+            );
+            background-size: 200% auto;
+            animation: progress-shimmer 1.8s linear infinite;
+        }
     `}</style>
 );
+
+// ─── Constants cho tính năng mới ────────────────────────────────────────────
+const MAX_RANGE_DAYS = 7;
+
+// ─── Helper: phân loại đơn truyền thống / đơn sàn theo tiền tố mã vận đơn ───
+function isTraditionalOrder(billCode: string): boolean {
+    const prefix = (billCode || '').substring(0, 2);
+    return prefix === "80" || prefix === "84";
+}
+
+// ─── Helper: giới hạn khoảng ngày tối đa MAX_RANGE_DAYS ngày ────────────────
+// Trả về { end, wasClamped } — nếu khoảng cách start→end > MAX_RANGE_DAYS thì
+// tự động kéo end về đúng start + MAX_RANGE_DAYS ngày.
+function clampDateRange(start: string, end: string): { end: string; wasClamped: boolean } {
+    const startD = new Date(start);
+    const endD = new Date(end);
+    if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return { end, wasClamped: false };
+
+    const diffDays = Math.round((endD.getTime() - startD.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays > MAX_RANGE_DAYS) {
+        const clamped = new Date(startD);
+        clamped.setDate(clamped.getDate() + MAX_RANGE_DAYS);
+        return { end: clamped.toISOString().split('T')[0], wasClamped: true };
+    }
+    return { end, wasClamped: false };
+}
+
+// ─── Helper: format thời gian đã trôi qua ────────────────────────────────────
+function formatElapsed(ms: number): string {
+    const s = ms / 1000;
+    if (s < 60) return `${s.toFixed(1)}s`;
+    const m = Math.floor(s / 60);
+    const rem = Math.round(s % 60);
+    return `${m}p ${rem}s`;
+}
+
+// ─── Helper: format ETA (thời gian còn lại ước tính) ────────────────────────
+function formatETA(seconds: number): string {
+    if (!isFinite(seconds) || seconds <= 0) return "...";
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}p ${s}s` : `${m}p`;
+}
+
+// ─── Tiến độ tải dữ liệu ─────────────────────────────────────────────────────
+interface LoadProgress {
+    total: number;
+    done: number;
+}
+
+// ─── Progress bar tải dữ liệu ────────────────────────────────────────────────
+function LoadProgressBar({ progress, elapsedMs }: { progress: LoadProgress; elapsedMs: number }) {
+    const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+    return (
+        <div className="bg-white rounded-2xl border border-violet-200 shadow-sm p-5 animate-fade-in">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-1.5">
+                <div className="flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+                    <span className="text-sm font-bold text-violet-700">
+                        Đang tải dữ liệu...
+                    </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-violet-500 font-semibold">
+                    <Timer className="w-3.5 h-3.5" />
+                    {pct >= 100 ? (
+                        <span className="text-emerald-600">Hoàn tất!</span>
+                    ) : (
+                        <span className="text-violet-700">{pct}%</span>
+                    )}
+                </div>
+            </div>
+            <div className="h-2 bg-violet-100 rounded-full overflow-hidden">
+                <div
+                    className="h-full rounded-full transition-all duration-300 ease-out progress-shimmer"
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+        </div>
+    );
+}
 
 function Page() {
     const router = useRouter();
@@ -51,6 +150,7 @@ function Page() {
     const [startTime, setStartTime]             = useState<string>((new Date()).toISOString().split('T')[0]);
     const [endTime, setEndTime]                 = useState<string>((new Date()).toISOString().split('T')[0]);
     const [dateError, setDateError]             = useState<string>('');
+    const [rangeClampNotice, setRangeClampNotice] = useState<string>('');
     const [allBills, setAllBills]               = useState<BillData[]>([]);
     const [allBillsWithStatus, setAllBillsWithStatus] = useState<BillWithStatus[]>([]);
     const [filteredBills, setFilteredBills]     = useState<BillWithStatus[]>([]);
@@ -61,6 +161,19 @@ function Page() {
     const [stoppedDays, setStoppedDays]         = useState<number>(0);
     const [currentPage, setCurrentPage]         = useState<number>(DEFAULT_PAGE);
     const [itemsPerPage, setItemsPerPage]       = useState<number>(DEFAULT_ITEMS_PER_PAGE);
+
+    // ── Filter đơn truyền thống / đơn sàn ──
+    const [showTraditional, setShowTraditional] = useState<boolean>(true);
+    const [showEcommerce, setShowEcommerce]     = useState<boolean>(true);
+
+    // ── Copy tất cả mã vận đơn ──
+    const [copiedAll, setCopiedAll] = useState<'all' | 'filtered' | ''>('');
+
+    // ── Đếm thời gian tải dữ liệu ──
+    const [elapsedMs, setElapsedMs]       = useState<number>(0);
+    const [fetchDurationMs, setFetchDurationMs] = useState<number | null>(null);
+    const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
+    const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const totalPages   = Math.ceil(filteredBills.length / itemsPerPage);
     const startIndex   = (currentPage - 1) * itemsPerPage;
@@ -85,20 +198,67 @@ function Page() {
 
     useEffect(() => { setCurrentPage(DEFAULT_PAGE); }, [filteredBills, itemsPerPage]);
 
-    const handleStartDateChange = (v: string) => { setStartTime(v); setDateError(validateDates(v, endTime).error); };
-    const handleEndDateChange   = (v: string) => { setEndTime(v);   setDateError(validateDates(startTime, v).error); };
+    // Dọn timer khi unmount
+    useEffect(() => {
+        return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
+    }, []);
+
+    const handleStartDateChange = (v: string) => {
+        setStartTime(v);
+        const { end, wasClamped } = clampDateRange(v, endTime);
+        if (wasClamped) {
+            setEndTime(end);
+            setRangeClampNotice(`Khoảng thời gian tối đa ${MAX_RANGE_DAYS} ngày — đã tự điều chỉnh ngày kết thúc.`);
+        } else {
+            setRangeClampNotice('');
+        }
+        setDateError(validateDates(v, end).error);
+    };
+
+    const handleEndDateChange = (v: string) => {
+        const { end, wasClamped } = clampDateRange(startTime, v);
+        setEndTime(end);
+        if (wasClamped) {
+            setRangeClampNotice(`Khoảng thời gian tối đa ${MAX_RANGE_DAYS} ngày — đã tự điều chỉnh ngày kết thúc.`);
+        } else {
+            setRangeClampNotice('');
+        }
+        setDateError(validateDates(startTime, end).error);
+    };
+
+    useEffect(() => {
+        if (!rangeClampNotice) return;
+        const t = setTimeout(() => setRangeClampNotice(''), 3500);
+        return () => clearTimeout(t);
+    }, [rangeClampNotice]);
 
     const getSumData = async () => {
         const validation = validateDates(startTime, endTime);
         if (!validation.isValid) { setDateError(validation.error); return; }
+
         setLoading(true);
+        setFetchDurationMs(null);
+        setElapsedMs(0);
+        setLoadProgress(null);
+        const startedAt = Date.now();
+        timerIntervalRef.current = setInterval(() => {
+            setElapsedMs(Date.now() - startedAt);
+        }, 100);
+
         try {
             const api  = createApiService(authToken);
-            const data = await api.getAllBillsData(startTime, endTime);
+            const data = await api.getAllBillsData(startTime, endTime, (done, total) => {
+                setLoadProgress({ total, done });
+            });
             setAllBills(data.allBills);
             setAllBillsWithStatus(data.billsWithStatus);
         } catch { setAllBills([]); setAllBillsWithStatus([]); }
-        finally  { setLoading(false); }
+        finally  {
+            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+            setFetchDurationMs(Date.now() - startedAt);
+            setLoading(false);
+            setLoadProgress(null);
+        }
     };
 
     const handleCopyToClipboard = async (text: string) => {
@@ -108,11 +268,25 @@ function Page() {
         }
     };
 
+    const handleCopyAllCodes = async (source: 'all' | 'filtered') => {
+        const list = source === 'all' ? allBillsWithStatus : filteredBills;
+        const text = list.map(i => i.billCode).join('\n');
+        if (await copyToClipboard(text)) {
+            setCopiedAll(source);
+            setTimeout(() => setCopiedAll(''), 2000);
+        }
+    };
+
     const handleScanTypeChange = (t: string, c: boolean) =>
         setSelectedScanTypes(prev => c ? [...prev, t] : prev.filter(x => x !== t));
     const selectAllScanTypes   = () => setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
     const deselectAllScanTypes = () => setSelectedScanTypes([]);
-    const clearFilters = () => { setSelectedScanTypes([...SCAN_TYPE_OPTIONS]); setStoppedDays(0); };
+    const clearFilters = () => {
+        setSelectedScanTypes([...SCAN_TYPE_OPTIONS]);
+        setStoppedDays(0);
+        setShowTraditional(true);
+        setShowEcommerce(true);
+    };
 
     useEffect(() => {
         const apply = async () => {
@@ -124,11 +298,18 @@ function Page() {
             else f = [];
             if (stoppedDays > 0)
                 f = f.filter(i => calculateStoppedDays(i.scanTime) >= stoppedDays);
+            // Filter đơn truyền thống / đơn sàn
+            f = f.filter(i => {
+                const trad = isTraditionalOrder(i.billCode);
+                if (trad && !showTraditional) return false;
+                if (!trad && !showEcommerce) return false;
+                return true;
+            });
             setFilteredBills(f);
             setFilterLoading(false);
         };
         apply();
-    }, [allBillsWithStatus, selectedScanTypes, stoppedDays]);
+    }, [allBillsWithStatus, selectedScanTypes, stoppedDays, showTraditional, showEcommerce]);
 
     useEffect(() => {
         if (allBillsWithStatus.length > 0 && selectedScanTypes.length === 0)
@@ -140,6 +321,9 @@ function Page() {
     const goToNextPage = () => { if (currentPage < totalPages) setCurrentPage(c => c + 1); };
 
     const hasData = allBillsWithStatus.length > 0;
+
+    const traditionalCount = allBillsWithStatus.filter(i => isTraditionalOrder(i.billCode)).length;
+    const ecommerceCount   = allBillsWithStatus.length - traditionalCount;
 
     return (
         <>
@@ -184,9 +368,14 @@ function Page() {
                         <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-center gap-2">
                             <Search className="w-4 h-4 text-slate-400" />
                             <span className="font-bold text-slate-700 text-sm">Tìm kiếm</span>
+                            <span className="ml-auto text-[11px] font-semibold text-slate-400">
+                                Tối đa {MAX_RANGE_DAYS} ngày / lần tìm
+                            </span>
                         </div>
                         <div className="p-6">
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                            {/* items-end: 3 cột luôn thẳng hàng ở đáy, không bị lệch khi cột giữa
+                                hiện thông báo lỗi (thông báo lỗi được đặt absolute bên dưới, xem cột 2) */}
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-end">
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Ngày bắt đầu</label>
                                     <input type="date" value={startTime}
@@ -194,36 +383,54 @@ function Page() {
                                            className={`w-full border rounded-xl px-4 py-2.5 text-sm text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-400 transition-all ${dateError ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
                                     />
                                 </div>
-                                <div>
+                                <div className="relative">
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Ngày kết thúc</label>
                                     <input type="date" value={endTime}
                                            onChange={e => handleEndDateChange(e.target.value)}
                                            className={`w-full border rounded-xl px-4 py-2.5 text-sm text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-400 transition-all ${dateError ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}
                                     />
+                                    {/* absolute: không chiếm chỗ trong layout -> không kéo giãn hàng grid,
+                                        nhờ đó nút "Lấy dữ liệu" ở cột 3 không bị đẩy xuống khi có lỗi */}
                                     {dateError && (
-                                        <p className="flex items-center gap-1 text-xs text-red-500 mt-1.5">
-                                            <AlertCircle className="w-3.5 h-3.5" />{dateError}
+                                        <p className="absolute top-full left-0 mt-1.5 flex items-center gap-1 text-xs text-red-500 whitespace-nowrap">
+                                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{dateError}
+                                        </p>
+                                    )}
+                                    {!dateError && rangeClampNotice && (
+                                        <p className="absolute top-full left-0 mt-1.5 flex items-center gap-1 text-xs text-amber-600 animate-fade-in whitespace-nowrap">
+                                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{rangeClampNotice}
                                         </p>
                                     )}
                                 </div>
-                                <div className="flex items-end">
+                                <div>
                                     <button onClick={getSumData} disabled={loading || !!dateError}
                                             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm">
                                         {loading
-                                            ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Đang tải...</>
+                                            ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Đang tải... {formatElapsed(elapsedMs)}</>
                                             : <><Search className="w-4 h-4" />Lấy dữ liệu</>}
                                     </button>
                                 </div>
                             </div>
+                            {!loading && fetchDurationMs !== null && (
+                                <p className="flex items-center gap-1.5 text-xs text-slate-400 font-medium mt-3">
+                                    <Timer className="w-3.5 h-3.5" />
+                                    Lần tải gần nhất mất {formatElapsed(fetchDurationMs)}
+                                </p>
+                            )}
                         </div>
                     </div>
 
                     {/* ── Loading ── */}
                     {loading && (
-                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
-                            <div className="w-10 h-10 border-[3px] border-slate-200 border-t-blue-500 rounded-full animate-spin" />
-                            <p className="font-semibold text-slate-700">Đang tải dữ liệu...</p>
-                        </div>
+                        loadProgress ? (
+                            <LoadProgressBar progress={loadProgress} elapsedMs={elapsedMs} />
+                        ) : (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center gap-4">
+                                <div className="w-10 h-10 border-[3px] border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                                <p className="font-semibold text-slate-700">Đang tải dữ liệu...</p>
+                                <p className="text-sm font-bold text-blue-600">{formatElapsed(elapsedMs)}</p>
+                            </div>
+                        )
                     )}
 
                     {/* ── Stats ── */}
@@ -264,22 +471,45 @@ function Page() {
                             </div>
 
                             <div className="p-6 space-y-4">
-                                {/* Stopped days */}
-                                <div className="bg-amber-50 border border-amber-100 rounded-xl p-5">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <Clock className="w-4 h-4 text-amber-600" />
-                                        <span className="text-sm font-bold text-slate-700">Đơn dừng hành trình</span>
+                                {/* Loại đơn: truyền thống / đơn sàn  +  Đơn dừng hành trình — chung 1 hàng */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="bg-teal-50 border border-teal-100 rounded-xl p-5">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Package className="w-4 h-4 text-teal-600" />
+                                            <span className="text-sm font-bold text-slate-700">Loại đơn</span>
+                                        </div>
+                                        <select
+                                            value={showTraditional && showEcommerce ? 'all' : showTraditional ? 'traditional' : 'ecommerce'}
+                                            onChange={e => {
+                                                const v = e.target.value;
+                                                if (v === 'traditional') { setShowTraditional(true); setShowEcommerce(false); }
+                                                else if (v === 'ecommerce') { setShowTraditional(false); setShowEcommerce(true); }
+                                                else { setShowTraditional(true); setShowEcommerce(true); }
+                                            }}
+                                            className="w-full border border-teal-200 bg-white rounded-xl px-4 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-400/40 focus:border-teal-400 transition-all"
+                                        >
+                                            <option value="all">Tất cả đơn hàng</option>
+                                            <option value="traditional">Truyền thống ({traditionalCount})</option>
+                                            <option value="ecommerce">Đơn sàn ({ecommerceCount})</option>
+                                        </select>
                                     </div>
-                                    <select value={stoppedDays} onChange={e => setStoppedDays(parseInt(e.target.value))}
-                                            className="w-full border border-amber-200 bg-white rounded-xl px-4 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400 transition-all">
-                                        <option value={0}>Tất cả đơn hàng</option>
-                                        <option value={1}>Dừng hành trình ≥ 1 ngày</option>
-                                        <option value={2}>Dừng hành trình ≥ 2 ngày</option>
-                                        <option value={3}>Dừng hành trình ≥ 3 ngày</option>
-                                        <option value={5}>Dừng hành trình ≥ 5 ngày</option>
-                                        <option value={7}>Dừng hành trình ≥ 7 ngày</option>
-                                        <option value={10}>Dừng hành trình ≥ 10 ngày</option>
-                                    </select>
+
+                                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-5">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Clock className="w-4 h-4 text-amber-600" />
+                                            <span className="text-sm font-bold text-slate-700">Đơn dừng hành trình</span>
+                                        </div>
+                                        <select value={stoppedDays} onChange={e => setStoppedDays(parseInt(e.target.value))}
+                                                className="w-full border border-amber-200 bg-white rounded-xl px-4 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400 transition-all">
+                                            <option value={0}>Tất cả đơn hàng</option>
+                                            <option value={1}>Dừng hành trình ≥ 1 ngày</option>
+                                            <option value={2}>Dừng hành trình ≥ 2 ngày</option>
+                                            <option value={3}>Dừng hành trình ≥ 3 ngày</option>
+                                            <option value={5}>Dừng hành trình ≥ 5 ngày</option>
+                                            <option value={7}>Dừng hành trình ≥ 7 ngày</option>
+                                            <option value={10}>Dừng hành trình ≥ 10 ngày</option>
+                                        </select>
+                                    </div>
                                 </div>
 
                                 {/* Scan type */}
@@ -321,9 +551,9 @@ function Page() {
                         </div>
                     )}
 
-                    {/* ── Pagination top ── */}
+                    {/* ── Pagination top / Hiển thị (chứa nút copy mã vận đơn) ── */}
                     {filteredBills.length > 0 && (
-                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-6 py-4 flex flex-col lg:flex-row items-center justify-between gap-3">
                             <div className="flex items-center gap-3">
                                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Hiển thị</span>
                                 <select value={itemsPerPage} onChange={e => setItemsPerPage(parseInt(e.target.value))}
@@ -333,9 +563,12 @@ function Page() {
                                     ))}
                                 </select>
                             </div>
-                            <span className="text-xs text-slate-400 font-medium">
-                                {startIndex + 1}–{Math.min(endIndex, filteredBills.length)} / {filteredBills.length} đơn hàng
-                            </span>
+
+                            <div className="flex items-center gap-3 lg:ml-auto">
+                                <span className="text-xs text-slate-400 font-medium whitespace-nowrap">
+                                    {startIndex + 1}–{Math.min(endIndex, filteredBills.length)} / {filteredBills.length} đơn hàng
+                                </span>
+                            </div>
                         </div>
                     )}
 
@@ -346,7 +579,23 @@ function Page() {
                                 <table className="w-full text-sm">
                                     <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                                     <tr>
-                                        {["Mã vận đơn", "Trạng thái hiện tại", "Thời gian thao tác", "BC thao tác", "Người thao tác", "Loại quét cuối", "Số ngày dừng"].map(h => (
+                                        <th key="Mã vận đơn" className="px-3.5 py-3.5 text-left text-xs font-bold flex items-center gap-2 text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                            Mã vận đơn
+                                            <button
+                                                onClick={() => handleCopyAllCodes('filtered')}
+                                                title="Copy mã vận đơn sau khi lọc"
+                                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                                                    copiedAll === 'filtered'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300'
+                                                }`}
+                                            >
+                                                {copiedAll === 'filtered'
+                                                    ? <><Check className="w-3.5 h-3.5" />Copied!</>
+                                                    : <><Copy className="w-3.5 h-3.5" />({filteredBills.length})</>}
+                                            </button>
+                                        </th>
+                                        {["Trạng thái hiện tại", "Thời gian thao tác", "BC thao tác", "Người thao tác", "Loại quét cuối", "Số ngày dừng"].map(h => (
                                             <th key={h} className="px-5 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                                         ))}
                                     </tr>
