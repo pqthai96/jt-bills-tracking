@@ -178,7 +178,7 @@ function BillLabel({
                         {/* RECEIVER ADDRESS */}
                         <div className="px-2 pb-2">
                             <div className="font-bold text-[8px]">
-                                <p className="text-[15px]">{detail?.receiverDetailedAddress || ""}</p>
+                                <p className="text-[15px] line-clamp-3">{detail?.receiverDetailedAddress || ""}</p>
                                 <p>{receiverAddressLine2}</p>
                                 <p>{detail?.receiverProvinceName || ""}</p>
                             </div>
@@ -273,10 +273,11 @@ function BillLabelNew({
 
     const isJntMp = !!trackingNumber && trackingNumber.startsWith("JNTMP");
     const isJnt = !!trackingNumber && !isJntMp && trackingNumber.startsWith("JNT");
+    const isJttk = !!trackingNumber && trackingNumber.startsWith("JTTK");
 
     const sideCodeFontSize = isJntMp ? "8px" : "10px";
-    const sideCodeLeftOffset = isJntMp ? "-42px" : isJnt ? "-44px" : "-32px";
-    const sideCodeRightOffset = isJntMp ? "-40px" : isJnt ? "-40px" : "-30px";
+    const sideCodeLeftOffset = isJntMp ? "-42px" : isJttk ? "48px" : isJnt ? "-44px" : "-32px";
+    const sideCodeRightOffset = isJntMp ? "-40px" : isJttk ? "50px" : isJnt ? "-40px" : "-30px";
 
     // Parse dispatch code parts: e.g. "805-A028M08-029"
     const dispatchParts = detail?.terminalDispatchCode?.split('-') ?? [];
@@ -417,7 +418,7 @@ function BillLabelNew({
                         SL:{detail?.goodsQuantity ?? 1}
                     </span>
                             </div>
-                            <div className="text-[9px] leading-tight mt-[2px]">
+                            <div className="text-[9px] line-clamp-2 leading-tight mt-[2px]">
                                 {detail?.goodsName || "—"}
                             </div>
                         </div>
