@@ -308,7 +308,7 @@ const BillItem = memo(function BillItem({
             </div>
             {terminalDispatchCode && (
                 <div
-                    className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
+                    className={`text-center text-xs font-mono mt-1 truncate select-none ${isSelected ? 'text-violet-400' : 'text-blue-500'}`}>
                     {terminalDispatchCode}
                 </div>
             )}
@@ -695,7 +695,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     };
 
     // ── Input handlers ────────────────────────────────────────────────────────
-    const isNumericCode = (code: string) => /^\d{12}$/.test(code.trim());
+    const isValidCode = (code: string) => /^[A-Za-z0-9]+$/.test(code.trim());
 
     const handleInputChange = (value: string) => {
         setInputCode(value);
@@ -704,19 +704,13 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         let remainingText = "";
         codes.forEach(code => {
             const t = code.trim();
-            if (isNumericCode(t)) {
+            if (isValidCode(t)) {
                 validCodes.push(t);
-            } else if (t.length >= 12 && /^\d+$/.test(t)) {
-                for (let i = 0; i < t.length; i += 12) {
-                    const chunk = t.substr(i, 12);
-                    if (chunk.length === 12) validCodes.push(chunk);
-                    else if (chunk.length > 0) remainingText += (remainingText ? " " : "") + chunk;
-                }
             } else {
                 remainingText += (remainingText ? " " : "") + t;
             }
         });
-        setParsedCodes(validCodes);
+        setParsedCodes(Array.from(new Set(validCodes)));
         if (remainingText !== value.replace(/[\s\n,]+/g, ' ').trim()) setInputCode(remainingText);
     };
 

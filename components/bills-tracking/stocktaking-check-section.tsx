@@ -588,8 +588,9 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             <div className="h-screen bg-slate-50 flex flex-col overflow-hidden text-[13px]">
 
                 {/* ── Top bar ── */}
-                <header className="bg-white border-b border-slate-200 flex-shrink-0 px-5 h-14 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
+                <header className="bg-white border-b border-slate-200 flex-shrink-0 px-5 h-14 flex items-center gap-4">
+                    {/* Left: back / title / date nav */}
+                    <div className="flex items-center gap-3 flex-shrink-0">
                         <button
                             onClick={() => window.history.back()}
                             className="flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors font-semibold text-xs"
@@ -628,7 +629,32 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* Middle: search + stocktaking status filter */}
+                    <div className="flex-1 flex items-center justify-center gap-3 min-w-0">
+                        <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                                   placeholder="Tìm mã vận đơn..."
+                                   className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-300/50 focus:border-indigo-400 transition-all w-48"
+                            />
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                            {(["all", "checked", "not_checked"] as const).map(v => (
+                                <button key={v} onClick={() => setFilterStocktaking(v)}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all whitespace-nowrap ${
+                                            filterStocktaking === v
+                                                ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                                                : "bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300"
+                                        }`}>
+                                    {v === "all" ? "Tất cả" : v === "checked" ? "✓ Đã kiểm" : "✗ Chưa kiểm"}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Right: stats / refresh */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             <CheckCircle2 className="w-3.5 h-3.5" />{checkedCount} đã kiểm
                         </span>
@@ -654,33 +680,10 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
 
                 {/* ── Filter bar ── */}
                 <div className="bg-white border-b border-slate-200 px-5 py-2.5 flex-shrink-0 flex flex-wrap items-center gap-3">
-                    {/* Search */}
-                    <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                        <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                               placeholder="Tìm mã vận đơn..."
-                               className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-300/50 focus:border-indigo-400 transition-all w-48"
-                        />
-                    </div>
-
-                    <div className="h-5 w-px bg-slate-200" />
                     <Filter className="w-3.5 h-3.5 text-slate-400" />
-
-                    {/* Stocktaking status buttons */}
-                    {(["all", "checked", "not_checked"] as const).map(v => (
-                        <button key={v} onClick={() => setFilterStocktaking(v)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                                    filterStocktaking === v
-                                        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                                        : "bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-300"
-                                }`}>
-                            {v === "all" ? "Tất cả" : v === "checked" ? "✓ Đã kiểm" : "✗ Chưa kiểm"}
-                        </button>
-                    ))}
 
                     {/* Trạng thái cuối — chỉ khi không filter "đã kiểm" */}
                     {filterStocktaking !== "checked" && allLastStatuses.length > 0 && (<>
-                        <div className="h-5 w-px bg-slate-200" />
                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Trạng thái cuối</span>
                         <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:border-indigo-300 cursor-pointer text-xs">
                             <input type="checkbox"

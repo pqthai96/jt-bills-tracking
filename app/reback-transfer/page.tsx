@@ -109,17 +109,7 @@ export default function RebackTransfer() {
     const handleInputChange = (value: string) => {
         setInputText(value);
         const raw = value.split(/[\s\n,;|]+/).map(s => s.trim()).filter(Boolean);
-        const codes: string[] = [];
-        raw.forEach(token => {
-            if (/^\d{12}$/.test(token)) {
-                codes.push(token);
-            } else if (/^\d{13,}$/.test(token)) {
-                for (let i = 0; i < token.length; i += 12) {
-                    const chunk = token.substr(i, 12);
-                    if (chunk.length === 12) codes.push(chunk);
-                }
-            }
-        });
+        const codes = raw.filter(token => /^[A-Za-z0-9]+$/.test(token));
         setParsedCodes(Array.from(new Set(codes)));
     };
 
