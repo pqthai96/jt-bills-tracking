@@ -194,12 +194,12 @@ export default function DailyReportSection() {
 
         // dispatch summary
         axios.post(
-            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_total",
+            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_total_doris",
             {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         );
         axios.post(
-            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_sum",
+            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_sum_doris",
             {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         ).then((r:any) => {
@@ -208,7 +208,7 @@ export default function DailyReportSection() {
             setSignRate(r.data.data.records[0].signRate);
         });
         axios.post(
-            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_datatime",
+            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_datatime_doris",
             {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         );
