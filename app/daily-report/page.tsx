@@ -238,7 +238,7 @@ export default function DailyReportSection() {
 
         // reback count
         axios.post(
-            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail",
+            "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail_d",
             {current:1,size:20,startTime,endTime,networkCodes:"028M08",countryId:"1",waybillNoType:0,queryType:"1"},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         ).then((r:any) => { setRebackNum(r.data.data.total); setStepRebackDone(true); });
@@ -320,7 +320,7 @@ export default function DailyReportSection() {
             })(),
 
             axios.post(
-                "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail",
+                "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail_d",
                 {current:1,size:rebackNum,startTime,endTime,networkCodes:"028M08",countryId:"1",waybillNoType:0,queryType:"1"},
                 {headers:{authToken, lang:'VN', langType:'VN'}}
             ).then((r:any) => setRebackBills(r.data.data.records.map((x:any) => x.waybillNo))),
