@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import {NETWORK_CODES, NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
+type NetworkCode = typeof NETWORK_CODES[number];
+
 // ─── Google Font (Nunito — hỗ trợ tiếng Việt) ────────────────────────────────
 const FontLoader = () => (
     <style>{`
@@ -161,12 +163,12 @@ export default function Home() {
     const [initialCheckDone, setInitialCheckDone] = useState(false);
     const [showToken, setShowToken] = useState(false);
     const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
-    const [networkCode, setNetworkCode] = useState("");
+    const [networkCode, setNetworkCode] = useState<NetworkCode>(NETWORK_CODES[0]);
 
     const isValid = tokenStatus === "valid";
     const isReady = isValid;
 
-    const validateToken = async (token: string, network: string, isInit = false) => {
+    const validateToken = async (token: string, network: NetworkCode, isInit = false) => {
         setTokenStatus("checking");
         setStatusMsg(isInit ? "Đang xác thực token đã lưu..." : "Đang kiểm tra...");
         try {
@@ -176,7 +178,7 @@ export default function Home() {
             );
             if (res.ok) {
                 localStorage.setItem("YL_TOKEN", token);
-                localStorage.setItem(NETWORK_CODE_STORAGE_KEY, network);
+                localStorage.setItem(NETWORK_CODE_STORAGE_KEY, network.code);
                 setStoredToken(token);
                 setAuthToken(token);
                 setNetworkCode(network);
@@ -209,13 +211,11 @@ export default function Home() {
 
     useEffect(() => {
         const saved = localStorage.getItem("YL_TOKEN") || localStorage.getItem("authToken");
-        const savedNetwork = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
-        const validSavedNetwork = savedNetwork && NETWORK_CODES.some(n => n.code === savedNetwork)
-            ? savedNetwork
-            : "";
-        if (validSavedNetwork) setNetworkCode(validSavedNetwork);
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        const validSavedNetwork = NETWORK_CODES.find(n => n.code === savedNetworkCode) || NETWORK_CODES[0];
+        setNetworkCode(validSavedNetwork);
 
-        if (saved?.trim() && validSavedNetwork) {
+        if (saved?.trim()) {
             validateToken(saved.trim(), validSavedNetwork, true);
         } else {
             setInitialCheckDone(true);
@@ -233,7 +233,8 @@ export default function Home() {
     };
 
     const handleNetworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setNetworkCode(e.target.value);
+        const selected = NETWORK_CODES.find(n => n.code === e.target.value) || NETWORK_CODES[0];
+        setNetworkCode(selected);
         if (tokenStatus === "valid") {
             setTokenStatus("idle");
             setStatusMsg("");
@@ -255,7 +256,7 @@ export default function Home() {
     const clearToken = () => {
         setAuthToken("");
         setStoredToken("");
-        setNetworkCode("");
+        setNetworkCode(NETWORK_CODES[0]);
         setTokenStatus("idle");
         setStatusMsg("");
         clearStored();
@@ -325,7 +326,7 @@ export default function Home() {
                                 <div
                                     className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                     <Network className="w-3 h-3"/>
-                                    {networkCode}
+                                    {networkCode.label}
                                 </div>
                             )}
 
@@ -375,7 +376,7 @@ export default function Home() {
 
                                 {/* Mã BC select — nhỏ gọn, nằm kế khung token */}
                                 <select
-                                    value={networkCode}
+                                    value={networkCode.code}
                                     onChange={handleNetworkChange}
                                     disabled={tokenStatus === "checking"}
                                     className="w-28 shrink-0 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-400/40 focus:border-orange-400 transition-all disabled:opacity-60"
