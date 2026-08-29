@@ -4,11 +4,13 @@ import React, {useEffect, useState} from 'react';
 import BillsTrackingSection from "@/components/bills-tracking/bills-tracking-section";
 import axios from "axios";
 import { useRouter } from 'next/navigation';
+import {NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 function Page() {
 
     const router = useRouter();
     const [authToken, setAuthToken] = useState<string>("");
+    const [networkCode, setNetworkCode] = useState<any>({code: "028M08", label: "028M08", agentCode: "028001"});
     const [noDeliverNum, setNoDeliverNum] = useState(0);
     const [bills, setBills] = useState<any>([]);
 
@@ -31,12 +33,14 @@ function Page() {
     // Kiểm tra token trước khi vào trang
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
 
         if (!ylToken || ylToken === "" || ylToken === null) {
             router.push('/');
             return;
         }
         setAuthToken(ylToken);
+        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
     }, [router]);
 
     useEffect(() => {
@@ -51,7 +55,7 @@ function Page() {
                 "dataType": "trends",
                 "statType": "network",
                 "Dimensions": "dispatch",
-                "deliverSiteCode": "028M08",
+                "deliverSiteCode": networkCode.code,
                 "countryId": "1"
             },
             {
@@ -69,7 +73,7 @@ function Page() {
                 "dataType": "trends",
                 "statType": "network",
                 "Dimensions": "dispatch",
-                "deliverSiteCode": "028M08",
+                "deliverSiteCode": networkCode.code,
                 "countryId": "1"
             },
             {
@@ -92,8 +96,8 @@ function Page() {
                 "startDate": startTime,
                 "endDate": endTime,
                 "detailType": "noDeliverNum",
-                "deliverAgentCode": "028001",
-                "deliverSiteCode": "028M08",
+                "deliverAgentCode": networkCode.agentCode,
+                "deliverSiteCode": networkCode.code,
                 "countryId": "1"
             },
             {

@@ -10,6 +10,7 @@ import {
     ArrowLeft, Truck, RefreshCw, Copy, Check, ArrowUpDown,
     Clock, User,
 } from "lucide-react";
+import { NETWORK_CODE_STORAGE_KEY } from "@/lib/networkCode";
 
 // ─── Font loader ──────────────────────────────────────────────────────────────
 const FontLoader = () => (
@@ -105,6 +106,7 @@ const GROUP_COLORS = [
 const BATCH_SIZE = 5;
 const MAX_RETRY = 3;
 const RETRY_DELAY_MS = 800;
+const DEFAULT_NETWORK_CODE = "028M08";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function sleep(ms: number) {
@@ -332,6 +334,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
     const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
 
+    // ── Mã BC hiện tại (đọc từ localStorage, đồng bộ với trang Home) ──────────
+    const [networkCode, setNetworkCode] = useState<any>(DEFAULT_NETWORK_CODE);
+
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
     const [show028M08, setShow028M08] = useState<boolean>(true);
@@ -365,6 +370,21 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         groupedOrders.forEach(o => m.set(o.waybill, o));
         return m;
     }, [groupedOrders]);
+
+    // ── Đọc Mã BC đã lưu ────────────────────────────────────────────────────
+    useEffect(() => {
+        const saved = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        if (saved) setNetworkCode(saved);
+
+        // Đồng bộ nếu Mã BC bị đổi ở tab/trang khác trong khi trang này vẫn mở
+        const handleStorage = (e: StorageEvent) => {
+            if (e.key === NETWORK_CODE_STORAGE_KEY && e.newValue) {
+                setNetworkCode(e.newValue);
+            }
+        };
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+    }, []);
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     const parseTerminalCode = (code: string) => {
@@ -531,6 +551,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         selectedStatuses, groupedOrders, show028M08, showNon028M08,
         showTraditional, showEcommerce, selectedScanners, selectedDispatchCode,
         returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter, giaoLaiHangFilter,
+        networkCode,
     ]);
 
     // ── API: load với batching + retry + progress ─────────────────────────────
@@ -674,7 +695,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
         filtered = filtered.filter(order => {
             const od = ordersData.find(o => o.waybill === order.waybill);
             if (!od) return true;
-            const is028 = od.scanNetworkCode === '028M08';
+            const is028 = od.scanNetworkCode === networkCode;
             if (is028 && !show028M08) return false;
             if (!is028 && !showNon028M08) return false;
             const isTraditional = isTraditionalOrder(order.waybill);
@@ -858,7 +879,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                                 : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
                                         }`}
                                     >
-                                        028M08
+                                        {networkCode}
                                     </button>
                                     <button
                                         onClick={() => setShowNon028M08(!showNon028M08)}
@@ -1281,6 +1302,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                             waybill={selectedCode}
                                             authToken={authToken}
                                             cache={detailCacheRef.current.get(selectedCode)}
+                                            networkCode={networkCode}
                                         />
                                     </div>
                                     <div className="flex-1 min-h-0">

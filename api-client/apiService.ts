@@ -15,6 +15,7 @@ const axios = require('axios');
 
 export interface BillData {
     billCode: string;
+
     [key: string]: any;
 }
 
@@ -70,11 +71,11 @@ export class ApiService {
     }
 
     // Get sum data to determine total number of bills
-    async getSumData(startTime: string, endTime: string): Promise<number> {
+    async getSumData(startTime: string, endTime: string, agentCode: string): Promise<number> {
         const formParams = this.buildFormParams({
             current: 1,
             size: 20,
-            pickFinanceCode: "028001",
+            pickFinanceCode: agentCode,
             timeStart: `${startTime} 00:00:00`,
             timeEnd: `${endTime} 23:59:59`,
             inputTimeStart: `${startTime} 00:00:00`,
@@ -100,6 +101,7 @@ export class ApiService {
         takingTotal: number,
         startTime: string,
         endTime: string,
+        agentCode: string,
         onProgress?: (fetched: number) => void
     ): Promise<BillData[]> {
         const PAGE_SIZE = 100; // giới hạn cứng của API, không tăng quá số này
@@ -109,7 +111,7 @@ export class ApiService {
             const formParams = this.buildFormParams({
                 current: page,     // trang 1, 2, 3, ..., totalPages
                 size: PAGE_SIZE,   // luôn cố định = 100
-                pickFinanceCode: "028001",
+                pickFinanceCode: agentCode,
                 timeStart: `${startTime} 00:00:00`,
                 timeEnd: `${endTime} 23:59:59`,
                 inputTimeStart: `${startTime} 00:00:00`,
@@ -250,6 +252,7 @@ export class ApiService {
     async getAllBillsData(
         startTime: string,
         endTime: string,
+        agentCode: string,
         onProgress?: ProgressCallback
     ): Promise<{
         allBills: BillData[];
@@ -259,7 +262,7 @@ export class ApiService {
         try {
             // Step 1: Get total count
             console.log('Step 1: Getting total count...');
-            const takingTotal = await this.getSumData(startTime, endTime);
+            const takingTotal = await this.getSumData(startTime, endTime, agentCode);
             console.log('Total bills to process:', takingTotal);
 
             // Tổng số "đơn vị công việc" = takingTotal * 3 bước
@@ -270,7 +273,7 @@ export class ApiService {
 
             // Step 2: Get all bills (phân trang, size=100/lần, current tăng dần)
             console.log('Step 2: Getting all bills...');
-            const allBills = await this.getAllBills(takingTotal, startTime, endTime, (fetched) => {
+            const allBills = await this.getAllBills(takingTotal, startTime, endTime, agentCode, (fetched) => {
                 // fetched là tổng số bill đã lấy được tính từ đầu bước 2 (không phải delta)
                 onProgress?.(fetched, totalUnits);
             });

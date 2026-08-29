@@ -5,8 +5,9 @@ import {useRouter} from "next/navigation";
 import {
     AlertCircle, Search, Copy, Truck, Package, FileText,
     CheckCircle, XCircle, Loader2, Eye, Key, Printer,
-    Shield, Zap, Warehouse, BarChart2, RotateCcw
+    Shield, Zap, Warehouse, BarChart2, RotateCcw, Network
 } from "lucide-react";
+import {NETWORK_CODES, NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 // ─── Google Font (Nunito — hỗ trợ tiếng Việt) ────────────────────────────────
 const FontLoader = () => (
@@ -160,10 +161,12 @@ export default function Home() {
     const [initialCheckDone, setInitialCheckDone] = useState(false);
     const [showToken, setShowToken] = useState(false);
     const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+    const [networkCode, setNetworkCode] = useState("");
 
     const isValid = tokenStatus === "valid";
+    const isReady = isValid;
 
-    const validateToken = async (token: string, isInit = false) => {
+    const validateToken = async (token: string, network: string, isInit = false) => {
         setTokenStatus("checking");
         setStatusMsg(isInit ? "Đang xác thực token đã lưu..." : "Đang kiểm tra...");
         try {
@@ -173,8 +176,10 @@ export default function Home() {
             );
             if (res.ok) {
                 localStorage.setItem("YL_TOKEN", token);
+                localStorage.setItem(NETWORK_CODE_STORAGE_KEY, network);
                 setStoredToken(token);
                 setAuthToken(token);
+                setNetworkCode(network);
                 setTokenStatus("valid");
                 setStatusMsg("Token hợp lệ — sẵn sàng sử dụng");
             } else {
@@ -198,13 +203,20 @@ export default function Home() {
     const clearStored = () => {
         localStorage.removeItem("YL_TOKEN");
         localStorage.removeItem("authToken");
+        localStorage.removeItem(NETWORK_CODE_STORAGE_KEY);
         setStoredToken("");
     };
 
     useEffect(() => {
         const saved = localStorage.getItem("YL_TOKEN") || localStorage.getItem("authToken");
-        if (saved?.trim()) {
-            validateToken(saved.trim(), true);
+        const savedNetwork = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        const validSavedNetwork = savedNetwork && NETWORK_CODES.some(n => n.code === savedNetwork)
+            ? savedNetwork
+            : "";
+        if (validSavedNetwork) setNetworkCode(validSavedNetwork);
+
+        if (saved?.trim() && validSavedNetwork) {
+            validateToken(saved.trim(), validSavedNetwork, true);
         } else {
             setInitialCheckDone(true);
             setStatusMsg("");
@@ -216,18 +228,34 @@ export default function Home() {
         setAuthToken(v);
         if (v !== storedToken) {
             setTokenStatus("idle");
-            setStatusMsg(v.trim() ? "Nhấn Xác thực để kiểm tra token" : "");
+            setStatusMsg("");
+        }
+    };
+
+    const handleNetworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setNetworkCode(e.target.value);
+        if (tokenStatus === "valid") {
+            setTokenStatus("idle");
+            setStatusMsg("");
         }
     };
 
     const handleValidate = () => {
-        if (authToken.trim()) validateToken(authToken.trim(), false);
-        else setStatusMsg("Vui lòng nhập token trước");
+        if (!authToken.trim()) {
+            setStatusMsg("Vui lòng nhập token trước");
+            return;
+        }
+        if (!networkCode) {
+            setStatusMsg("Vui lòng chọn Mã BC trước");
+            return;
+        }
+        validateToken(authToken.trim(), networkCode, false);
     };
 
     const clearToken = () => {
         setAuthToken("");
         setStoredToken("");
+        setNetworkCode("");
         setTokenStatus("idle");
         setStatusMsg("");
         clearStored();
@@ -291,15 +319,26 @@ export default function Home() {
                             </div>
                         </div>
 
-                        {/* Status pill */}
-                        <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
-                            isValid
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : "bg-slate-100 text-slate-500 border border-slate-200"
-                        }`}>
-                            <div
-                                className={`w-1.5 h-1.5 rounded-full ${isValid ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`}/>
-                            {isValid ? "Đã kết nối" : "Chưa xác thực"}
+                        <div className="flex items-center gap-2">
+                            {/* Network code pill (only once token is valid) */}
+                            {isValid && networkCode && (
+                                <div
+                                    className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    <Network className="w-3 h-3"/>
+                                    {networkCode}
+                                </div>
+                            )}
+
+                            {/* Status pill */}
+                            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                                isReady
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    : "bg-slate-100 text-slate-500 border border-slate-200"
+                            }`}>
+                                <div
+                                    className={`w-1.5 h-1.5 rounded-full ${isReady ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`}/>
+                                {isReady ? "Đã kết nối" : "Chưa xác thực"}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -334,7 +373,19 @@ export default function Home() {
                                     </button>
                                 </div>
 
-                                {tokenStatus !== "valid" && authToken && (
+                                {/* Mã BC select — nhỏ gọn, nằm kế khung token */}
+                                <select
+                                    value={networkCode}
+                                    onChange={handleNetworkChange}
+                                    disabled={tokenStatus === "checking"}
+                                    className="w-28 shrink-0 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-400/40 focus:border-orange-400 transition-all disabled:opacity-60"
+                                >
+                                    {NETWORK_CODES.map(n => (
+                                        <option key={n.code} value={n.code}>{n.label}</option>
+                                    ))}
+                                </select>
+
+                                {tokenStatus !== "valid" && (
                                     <button
                                         onClick={handleValidate}
                                         disabled={tokenStatus === "checking"}
@@ -432,39 +483,39 @@ export default function Home() {
                         {/* Hàng 1: 2 nút */}
                         <div className="grid grid-cols-2 gap-3">
                             {NAV_ITEMS.slice(0, 2).map(item => (
-                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                                <NavCard key={item.href} item={item} enabled={isReady} onNavigate={handleNavigate}/>
                             ))}
                         </div>
 
                         {/* Hàng 2: 3 nút */}
                         <div className="grid grid-cols-3 gap-3">
                             {NAV_ITEMS.slice(2, 5).map(item => (
-                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                                <NavCard key={item.href} item={item} enabled={isReady} onNavigate={handleNavigate}/>
                             ))}
                         </div>
 
                         {/* Hàng 3: 3 nút */}
                         <div className="grid grid-cols-3 gap-3">
                             {NAV_ITEMS.slice(5, 8).map(item => (
-                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                                <NavCard key={item.href} item={item} enabled={isReady} onNavigate={handleNavigate}/>
                             ))}
                         </div>
 
                         {/* Hàng 4: 2 nút */}
                         <div className="grid grid-cols-2 gap-3">
                             {NAV_ITEMS.slice(8, 10).map(item => (
-                                <NavCard key={item.href} item={item} enabled={isValid} onNavigate={handleNavigate}/>
+                                <NavCard key={item.href} item={item} enabled={isReady} onNavigate={handleNavigate}/>
                             ))}
                         </div>
                     </div>
 
                     {/* Lock notice */}
-                    {!isValid && (
+                    {!isReady && (
                         <div className="flex items-center justify-center gap-3 py-2">
                             <div className="h-px flex-1 bg-slate-200"/>
                             <div className="flex items-center gap-1.5 text-xs text-slate-400">
                                 <AlertCircle className="w-3.5 h-3.5"/>
-                                Xác thực token để mở khóa các chức năng
+                                Xác thực token và chọn Mã BC để mở khóa các chức năng
                             </div>
                             <div className="h-px flex-1 bg-slate-200"/>
                         </div>

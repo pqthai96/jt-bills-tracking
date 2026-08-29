@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import axios from "axios";
 import { useRouter } from 'next/navigation';
 import StocktakingCheckSection from "@/components/bills-tracking/stocktaking-check-section";
+import {NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 function toDateStr(d: Date): string {
     const y = d.getFullYear();
@@ -15,6 +16,7 @@ function toDateStr(d: Date): string {
 function Page() {
     const router = useRouter();
     const [authToken, setAuthToken] = useState<string>("");
+    const [networkCode, setNetworkCode] = useState<any>({code: "028M08", label: "028M08", agentCode: "028001"});
     const [lossNum, setLossNum] = useState(0);
     const [bills, setBills] = useState<any>([]);
     const [selectedDate, setSelectedDate] = useState<string>(toDateStr(new Date()));
@@ -26,8 +28,10 @@ function Page() {
 
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
         if (!ylToken) { router.push('/'); return; }
         setAuthToken(ylToken);
+        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
     }, [router]);
 
     useEffect(() => {
@@ -39,13 +43,13 @@ function Page() {
 
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_stocktaking_total",
-            { current: 1, size: 20, startDate: startTime, startTime, endDate: endTime, endTime, dimension: "Network", scanNetworkCode: "028M08", countryId: "1" },
+            { current: 1, size: 20, startDate: startTime, startTime, endDate: endTime, endTime, dimension: "Network", scanNetworkCode: networkCode.code, countryId: "1" },
             { headers: { authToken, lang: 'VN', langType: 'VN' } }
         );
 
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_stocktaking_sum",
-            { current: 1, size: 20, startDate: startTime, startTime, endDate: endTime, endTime, dimension: "Network", scanNetworkCode: "028M08", countryId: "1" },
+            { current: 1, size: 20, startDate: startTime, startTime, endDate: endTime, endTime, dimension: "Network", scanNetworkCode: networkCode.code, countryId: "1" },
             { headers: { authToken, lang: 'VN', langType: 'VN' } }
         ).then((resp: any) => setLossNum(resp.data.data.records[0].lossNum));
     }, [authToken, selectedDate]);
@@ -55,7 +59,7 @@ function Page() {
         const { startTime, endTime } = getDateRange(selectedDate);
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_stocktaking_detail",
-            { current: 1, size: lossNum, startDate: startTime, endDate: endTime, jumpType: "lossNum", scanAgentCode: "028001", scanNetworkCode: "028M08", countryId: "1", isFlag: 1, isScan: 0 },
+            { current: 1, size: lossNum, startDate: startTime, endDate: endTime, jumpType: "lossNum", scanAgentCode: networkCode.agentCode, scanNetworkCode: networkCode.code, countryId: "1", isFlag: 1, isScan: 0 },
             { headers: { authToken, lang: 'VN', langType: 'VN' } }
         ).then((resp: any) => setBills(resp.data.data.records.map((record: any) => record.billcode)));
     }, [lossNum]);

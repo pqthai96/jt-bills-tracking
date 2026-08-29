@@ -30,6 +30,7 @@ import {
     type BillData,
     type BillWithStatus
 } from "@/api-client/apiService";
+import {NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 // ─── Font loader ──────────────────────────────────────────────────────────────
 const FontLoader = () => (
@@ -148,6 +149,7 @@ function Page() {
 
     const [authToken, setAuthToken]             = useState<string>('');
     const [startTime, setStartTime]             = useState<string>((new Date()).toISOString().split('T')[0]);
+    const [networkCode, setNetworkCode] = useState<any>({code: "028M08", label: "028M08", agentCode: "028001"});
     const [endTime, setEndTime]                 = useState<string>((new Date()).toISOString().split('T')[0]);
     const [dateError, setDateError]             = useState<string>('');
     const [rangeClampNotice, setRangeClampNotice] = useState<string>('');
@@ -182,8 +184,10 @@ function Page() {
 
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
         if (!ylToken) { router.push('/'); return; }
         setAuthToken(ylToken);
+        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
     }, [router]);
 
     useEffect(() => {
@@ -247,7 +251,7 @@ function Page() {
 
         try {
             const api  = createApiService(authToken);
-            const data = await api.getAllBillsData(startTime, endTime, (done, total) => {
+            const data = await api.getAllBillsData(startTime, endTime, networkCode.agentCode, (done, total) => {
                 setLoadProgress({ total, done });
             });
             setAllBills(data.allBills);

@@ -358,10 +358,12 @@ function PodHistory({
                         waybill,
                         authToken,
                         cache,
+                        networkCode = "028M08",
                     }: {
     waybill: any;
     authToken: string;
     cache?: DetailCache;
+    networkCode?: string;
 }) {
     const [podHistory, setPodHistory] = useState<any[]>(cache?.podHistory ?? []);
     const [loading, setLoading]       = useState(!cache?.podHistory);
@@ -433,7 +435,7 @@ function PodHistory({
                             <tbody className="divide-y divide-slate-100">
                             {podHistory.map((row: any, index) => (
                                 <tr key={index}
-                                    className={`transition-colors align-top ${row.scanNetworkCode === "028M08" ? 'bg-pink-50' : 'hover:bg-slate-50/80'}`}>
+                                    className={`transition-colors align-top ${row.scanNetworkCode === networkCode ? 'bg-pink-50' : 'hover:bg-slate-50/80'}`}>
                                     <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{row.scanTime}</td>
                                     <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{row.uploadTime}</td>
                                     <td className="px-4 py-3">

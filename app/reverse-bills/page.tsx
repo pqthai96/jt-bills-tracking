@@ -4,11 +4,13 @@ import React, {useEffect, useState} from 'react';
 import BillsTrackingSection from "@/components/bills-tracking/bills-tracking-section";
 import axios from "axios";
 import {useRouter} from 'next/navigation';
+import {NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 function Page() {
 
     const router = useRouter();
     const [authToken, setAuthToken] = useState<string>("");
+    const [networkCode, setNetworkCode] = useState<any>({code: "028M08", label: "028M08", agentCode: "028001"});
     const [reverseNum, setReverseNum] = useState(0);
     const [bills, setBills] = useState<any>([]);
 
@@ -32,12 +34,14 @@ function Page() {
     // Kiểm tra token trước khi vào trang
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
 
         if (!ylToken || ylToken === "" || ylToken === null) {
             router.push('/');
             return;
         }
         setAuthToken(ylToken);
+        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
     }, [router]);
 
     useEffect(() => {
@@ -49,7 +53,7 @@ function Page() {
                 "current": 1,
                 "size": 20,
                 "Dimensions": "Network",
-                "scanNetworkCode": "028M08",
+                "scanNetworkCode": networkCode.code,
                 "countryId": "1",
                 "startTime": startTime,
                 "startDate": startTime,
@@ -68,7 +72,7 @@ function Page() {
                 "current": 1,
                 "size": 20,
                 "Dimensions": "Network",
-                "scanNetworkCode": "028M08",
+                "scanNetworkCode": networkCode.code,
                 "countryId": "1",
                 "startTime": startTime,
                 "startDate": startTime,
@@ -94,8 +98,8 @@ function Page() {
                 "size": reverseNum,
                 "startDate": startTime,
                 "endDate": endTime,
-                "scanAgentCode": "028001",
-                "scanNetworkCode": "028M08",
+                "scanAgentCode": networkCode.agentCode,
+                "scanNetworkCode": networkCode.code,
                 "countryId": "1",
                 "isFlag": "1"
             },

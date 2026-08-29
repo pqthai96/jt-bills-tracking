@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {useRouter} from "next/navigation";
 import axios from "axios";
+import {NETWORK_CODES, NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
 const FontLoader = () => (
     <style>{`
@@ -33,6 +34,15 @@ const FontLoader = () => (
         .loader-ring  { animation: pulse-ring 1.4s ease-in-out infinite; }
     `}</style>
 );
+
+// ── Network code fallback (dùng khi chưa có gì trong localStorage) ─────────
+const DEFAULT_NETWORK_CODE = {code: "028M08", label: "028M08", agentCode: "028001"};
+
+function resolveNetworkCode(savedCode: string | null) {
+    if (!savedCode) return DEFAULT_NETWORK_CODE;
+    const found = NETWORK_CODES.find((n: any) => n.code === savedCode);
+    return found ?? DEFAULT_NETWORK_CODE;
+}
 
 function toDateStr(d: Date) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -83,6 +93,9 @@ export default function DailyReportSection() {
     const router = useRouter();
     const [authToken, setAuthToken] = useState<string>("");
 
+    // ── Network code (đọc từ localStorage, giống các trang khác) ──────────
+    const [networkCode, setNetworkCode] = useState<{code: string; label: string; agentCode: string}>(DEFAULT_NETWORK_CODE);
+
     // ── Raw API state ──────────────────────────────────────────────────────
     const [busOpArrival, setBusOpArrival] = useState<any[]>([]);
     const [arrivalNum, setArrivalNum]     = useState(0);
@@ -129,8 +142,9 @@ export default function DailyReportSection() {
 
     // ── Derived values ────────────────────────────────────────────────────
     const tiktokOrders      = busOpArrival.filter((b:any) => b?.startsWith("85") || b?.startsWith("86") || b?.startsWith("87"));
-    // ✅ Filter đơn truyền thống theo customerCode bắt đầu bằng "028"
-    const traditionalBills  = receiveBills.filter((b:any) => b?.customerCode?.startsWith("028"));
+    // ✅ Filter đơn truyền thống theo customerCode bắt đầu bằng mã bưu cục hiện tại (vd "028")
+    const agentPrefix       = networkCode.agentCode?.slice(0, 3) || "028";
+    const traditionalBills  = receiveBills.filter((b:any) => b?.customerCode?.startsWith(agentPrefix));
     const allRebackBills    = rebackBills.filter((b:any) => !b?.endsWith("-001"));
     const allTiktokRebacks  = allRebackBills.filter((b:any) => b?.startsWith("85") || b?.startsWith("86") || b?.startsWith("87"));
 
@@ -139,11 +153,14 @@ export default function DailyReportSection() {
         ? `${(signCount / staffNum).toFixed(1)} đơn/người`
         : "— (chưa nhập nhân viên)";
 
-    // ── Auth check ────────────────────────────────────────────────────────
+    // ── Auth check + đọc network code đã lưu ────────────────────────────────
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
         if (!ylToken) { router.push('/'); return; }
         setAuthToken(ylToken);
+
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        setNetworkCode(resolveNetworkCode(savedNetworkCode));
     }, [router]);
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -174,6 +191,7 @@ export default function DailyReportSection() {
         setIsFetching(true);
 
         const {startTime, endTime} = getDateRange(selectedDate);
+        const {code: siteCode, agentCode} = networkCode;
 
         // arrival summary
         axios.post(
@@ -195,12 +213,12 @@ export default function DailyReportSection() {
         // dispatch summary
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_total_doris",
-            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
+            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:[siteCode]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         );
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_sum_doris",
-            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
+            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:[siteCode]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         ).then((r:any) => {
             setSendCount(r.data.data.records[0].sendCount);
@@ -209,7 +227,7 @@ export default function DailyReportSection() {
         });
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/day_dispatch_monitor_datatime_doris",
-            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:["028M08"]},
+            {current:1, size:20, startTime, endTime, dimensionType:336, countryId:"1", inputsiteCode:[siteCode]},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         );
 
@@ -232,18 +250,18 @@ export default function DailyReportSection() {
         // stock count
         axios.post(
             "https://jmsgw.jtexpress.vn/networkmanagement/omsWaybill/shippingWaybillListCount",
-            new URLSearchParams({current:"1",size:"20",pickFinanceCode:"028001",timeStart:startTime,timeEnd:endTime,inputTimeStart:startTime,inputTimeEnd:endTime}),
+            new URLSearchParams({current:"1",size:"20",pickFinanceCode:agentCode,timeStart:startTime,timeEnd:endTime,inputTimeStart:startTime,inputTimeEnd:endTime}),
             {headers:{"Content-Type":"application/x-www-form-urlencoded",authToken,lang:"VN",langType:"VN"}}
         ).then((r:any) => { setReceiveNum(r.data.data); setStepReceiveDone(true); });
 
         // reback count
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail_d",
-            {current:1,size:20,startTime,endTime,networkCodes:"028M08",countryId:"1",waybillNoType:0,queryType:"1"},
+            {current:1,size:20,startTime,endTime,networkCodes:siteCode,countryId:"1",waybillNoType:0,queryType:"1"},
             {headers:{authToken, lang:'VN', langType:'VN'}}
         ).then((r:any) => { setRebackNum(r.data.data.total); setStepRebackDone(true); });
 
-        // ✅ API mới: Tỷ lệ nhận kiện thành công — punctuality_platform_pick_total
+        // ✅ Tỷ lệ nhận kiện thành công — punctuality_platform_pick_total
         // Lấy field ageingPickWinRate từ records[0]
         axios.post(
             "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/punctuality_platform_pick_total",
@@ -254,7 +272,7 @@ export default function DailyReportSection() {
                 bestPickTimeEnd:   endTime,
                 bestPickTimeStart: startTime,
                 countryId:         "1",
-                networkCodeNew:    "028M08",
+                networkCodeNew:    siteCode,
                 staffType:         0,
                 timeType:          "A",
             },
@@ -280,17 +298,18 @@ export default function DailyReportSection() {
             checkAllDone();
         });
 
-    }, [authToken, fetchTrigger]);
+    }, [authToken, fetchTrigger, networkCode]);
 
     // ── Phase 2: detail lists (depends on counts) ─────────────────────────
     useEffect(() => {
         if (!authToken || arrivalNum === 0 || receiveNum === 0 || rebackNum === 0) return;
         const {startTime, endTime} = getDateRange(selectedDate);
+        const {code: siteCode, agentCode} = networkCode;
 
         Promise.all([
             axios.post(
                 "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/bus_op_arrival_monitor_detail",
-                {current:1,size:arrivalNum,startTime,endTime,JumpType:"arrivalNum",arrivalSationCode:"028M08",countryId:"1",dateType:2},
+                {current:1,size:arrivalNum,startTime,endTime,JumpType:"arrivalNum",arrivalSationCode:siteCode,countryId:"1",dateType:2},
                 {headers:{authToken, lang:'VN', langType:'VN'}}
             ).then((r:any) => setBusOpArrival(r.data.data.records.map((x:any) => x.billCode))),
 
@@ -306,7 +325,7 @@ export default function DailyReportSection() {
                             new URLSearchParams({
                                 current: String(page),
                                 size:    String(PAGE_SIZE),
-                                pickFinanceCode: "028001",
+                                pickFinanceCode: agentCode,
                                 timeStart:      startTime,
                                 timeEnd:        endTime,
                                 inputTimeStart: startTime,
@@ -321,7 +340,7 @@ export default function DailyReportSection() {
 
             axios.post(
                 "https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/opt_reback_query_detail_d",
-                {current:1,size:rebackNum,startTime,endTime,networkCodes:"028M08",countryId:"1",waybillNoType:0,queryType:"1"},
+                {current:1,size:rebackNum,startTime,endTime,networkCodes:siteCode,countryId:"1",waybillNoType:0,queryType:"1"},
                 {headers:{authToken, lang:'VN', langType:'VN'}}
             ).then((r:any) => setRebackBills(r.data.data.records.map((x:any) => x.waybillNo))),
         ]).then(() => {
@@ -329,7 +348,7 @@ export default function DailyReportSection() {
             refDetailDone.current = true;
             checkAllDone();
         });
-    }, [arrivalNum, receiveNum, rebackNum]);
+    }, [arrivalNum, receiveNum, rebackNum, networkCode]);
 
     // ── Date nav ──────────────────────────────────────────────────────────
     const shiftDay = (delta: number) => {
@@ -379,7 +398,7 @@ export default function DailyReportSection() {
                         </div>
 
                         <span className="mono text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg">
-                            028M08
+                            {networkCode.code}
                         </span>
 
                         <div className="w-px h-5 bg-slate-200"/>
@@ -483,7 +502,7 @@ export default function DailyReportSection() {
                                 <span className="text-[11px] font-semibold text-indigo-500 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">{formatDisplayDate(selectedDate)}</span>
                             </div>
                             <div className="px-6 py-5 text-slate-700 text-[15px] leading-8 flex-1">
-                                Tình hình vận hành <span className="font-semibold text-slate-900">028M08</span> ngày <span className="font-semibold text-slate-900">{formatDisplayDate(selectedDate)}</span><br/>
+                                Tình hình vận hành <span className="font-semibold text-slate-900">{networkCode.code}</span> ngày <span className="font-semibold text-slate-900">{formatDisplayDate(selectedDate)}</span><br/>
                                 - Tổng lượng hàng đến: <span className="font-semibold text-slate-900">{busOpArrival.length} đơn</span><br/>
                                 - Số phiếu phát hàng: <span className="font-semibold text-slate-900">{sendCount} đơn</span><br/>
                                 - Số phiếu ký nhận: <span className="font-semibold text-slate-900">{signCount} đơn</span><br/>

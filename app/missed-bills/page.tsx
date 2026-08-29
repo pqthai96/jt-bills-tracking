@@ -4,10 +4,12 @@ import React, {useEffect, useState} from 'react';
 import { useRouter } from 'next/navigation';
 import BillsTrackingSection from "@/components/bills-tracking/bills-tracking-section";
 import axios from "axios";
+import { NETWORK_CODE_STORAGE_KEY } from "@/lib/networkCode";
 
 function Page() {
     const router = useRouter();
     const [authToken, setAuthToken] = useState<string>("");
+    const [networkCode, setNetworkCode] = useState<any>({code: "028M08", label: "028M08", agentCode: "028001"});
     const [arrivalMissNum, setArrivalMissNum] = useState(0);
     const [bills, setBills] = useState<any>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -30,6 +32,7 @@ function Page() {
     // Kiểm tra token trước khi vào trang
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
+        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
 
         if (!ylToken || ylToken === "" || ylToken === null) {
             // Không có token, chuyển hướng về trang chủ
@@ -39,6 +42,7 @@ function Page() {
 
         // Có token, set vào state và cho phép tiếp tục
         setAuthToken(ylToken);
+        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
         setIsLoading(false);
     }, [router]);
 
@@ -53,7 +57,7 @@ function Page() {
             axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_total_db", {
                 "current": 1,
                 "size": 20,
-                "scansitecode": "028M08",
+                "scansitecode": networkCode.code,
                 "countPage": "network",
                 "startTime": startTime,
                 "endTime": endTime,
@@ -70,7 +74,7 @@ function Page() {
             axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_update_time_db", {
                 "current": 1,
                 "size": 20,
-                "scansitecode": "028M08",
+                "scansitecode": networkCode.code,
                 "countPage": "network",
                 "startTime": startTime,
                 "endTime": endTime,
@@ -87,7 +91,7 @@ function Page() {
             axios.post("https://jmsgw.jtexpress.vn/businessindicator/bigdataReport/detail/miss_scan_arrival_deliver_sum_db", {
                 "current": 1,
                 "size": 20,
-                "scansitecode": "028M08",
+                "scansitecode": networkCode.code,
                 "countPage": "network",
                 "startTime": startTime,
                 "endTime": endTime,
@@ -116,7 +120,7 @@ function Page() {
             }
         });
 
-    }, [authToken, isLoading, router]);
+    }, [authToken, isLoading, networkCode, router]);
 
     // Fetch bills khi có arrivalMissNum
     useEffect(() => {
@@ -131,8 +135,8 @@ function Page() {
             "endTime": endTime,
             "jump_tab": "arrival",
             "jump_type": "arr_miss",
-            "deliversitecode": "028M08",
-            "agentcode": "028001",
+            "deliversitecode": networkCode.code,
+            "agentcode": networkCode.agentCode,
             "detailType": "arrival",
             "countryId": "1"
         }, {
@@ -153,7 +157,7 @@ function Page() {
                 router.push('/');
             }
         });
-    }, [arrivalMissNum, authToken, router]);
+    }, [arrivalMissNum, authToken, networkCode, router]);
 
     // Hiển thị loading trong khi kiểm tra token
     if (isLoading) {
