@@ -339,8 +339,8 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
-    const [show028M08, setShow028M08] = useState<boolean>(true);
-    const [showNon028M08, setShowNon028M08] = useState<boolean>(true);
+    const [showNetworkCode, setShowNetworkCode] = useState<boolean>(true);
+    const [showNonNetworkCode, setShowNonNetworkCode] = useState<boolean>(true);
     const [showTraditional, setShowTraditional] = useState<boolean>(true);
     const [showEcommerce, setShowEcommerce] = useState<boolean>(true);
     const [copied, setCopied] = useState(false);
@@ -548,7 +548,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     useEffect(() => {
         applyStatusFilter();
     }, [
-        selectedStatuses, groupedOrders, show028M08, showNon028M08,
+        selectedStatuses, groupedOrders, showNetworkCode, showNonNetworkCode,
         showTraditional, showEcommerce, selectedScanners, selectedDispatchCode,
         returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter, giaoLaiHangFilter,
         networkCode,
@@ -694,10 +694,16 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             filtered = filtered.filter(o => selectedStatuses.includes(o.scanTypeName));
         filtered = filtered.filter(order => {
             const od = ordersData.find(o => o.waybill === order.waybill);
+
+            // ── Lọc theo Mã BC (segment 2 của terminalDispatchCode) ──
+            const segments = (order.terminalDispatchCode || '').split('-');
+            const orderNetworkCode = (segments[1] || '').replace(/^[A-Za-z]+/, ''); // bỏ tiền tố chữ (vd: "S028W04" -> "028W04")
+            const isNetworkCode = orderNetworkCode === networkCode;
+
+            if (isNetworkCode && !showNetworkCode) return false;
+            if (!isNetworkCode && !showNonNetworkCode) return false;
+
             if (!od) return true;
-            const is028 = od.scanNetworkCode === networkCode;
-            if (is028 && !show028M08) return false;
-            if (!is028 && !showNon028M08) return false;
             const isTraditional = isTraditionalOrder(order.waybill);
             if (isTraditional && !showTraditional) return false;
             if (!isTraditional && !showEcommerce) return false;
@@ -776,8 +782,8 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
 
     const clearFilters = () => {
         setSelectedStatuses([...availableStatuses]);
-        setShow028M08(true);
-        setShowNon028M08(true);
+        setShowNetworkCode(true);
+        setShowNonNetworkCode(true);
         setShowTraditional(true);
         setShowEcommerce(true);
         setSelectedScanners([]);
@@ -872,9 +878,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                     </button>
                                     <div className="w-px h-4 bg-slate-300"/>
                                     <button
-                                        onClick={() => setShow028M08(!show028M08)}
+                                        onClick={() => setShowNetworkCode(!showNetworkCode)}
                                         className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
-                                            show028M08
+                                            showNetworkCode
                                                 ? 'bg-teal-100 text-teal-800 border-teal-200'
                                                 : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
                                         }`}
@@ -882,9 +888,9 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
                                         {networkCode}
                                     </button>
                                     <button
-                                        onClick={() => setShowNon028M08(!showNon028M08)}
+                                        onClick={() => setShowNonNetworkCode(!showNonNetworkCode)}
                                         className={`whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
-                                            showNon028M08
+                                            showNonNetworkCode
                                                 ? 'bg-teal-100 text-teal-800 border-teal-200'
                                                 : 'bg-white border-slate-200 text-slate-400 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700'
                                         }`}

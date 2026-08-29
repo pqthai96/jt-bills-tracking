@@ -87,9 +87,6 @@ export const API_CONFIG = {
     RETRY_DELAY: 1000
 } as const;
 
-// Network code
-export const NETWORK_CODE = "028M08";
-
 // Token storage keys to search for
 export const TOKEN_KEYS = [
     'authToken', 'token', 'access_token', 'accessToken',

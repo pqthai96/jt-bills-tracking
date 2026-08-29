@@ -1,7 +1,6 @@
 import {
     API_ENDPOINTS,
-    API_CONFIG,
-    NETWORK_CODE
+    API_CONFIG
 } from "@/lib/constants";
 import {
     chunkArray,
