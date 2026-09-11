@@ -29,7 +29,6 @@ function Page() {
 
         return {startTime, endTime};
     };
-    console.log(authToken)
 
     // Kiểm tra token trước khi vào trang
     useEffect(() => {
@@ -41,11 +40,26 @@ function Page() {
             return;
         }
         setAuthToken(ylToken);
-        if (savedNetworkCode) setNetworkCode(savedNetworkCode);
+
+        if (savedNetworkCode) {
+            try {
+                const parsed = JSON.parse(savedNetworkCode);
+                // Đảm bảo object có đủ code + agentCode trước khi set,
+                // tránh ghi đè bằng object thiếu field
+                if (parsed && parsed.code && parsed.agentCode) {
+                    setNetworkCode(parsed);
+                } else {
+                    console.warn('savedNetworkCode thiếu code/agentCode, giữ giá trị mặc định:', parsed);
+                }
+            } catch (e) {
+                console.error('Lỗi parse savedNetworkCode từ localStorage:', e, savedNetworkCode);
+                // giữ nguyên giá trị mặc định nếu parse lỗi
+            }
+        }
     }, [router]);
 
     useEffect(() => {
-        if (!authToken) return;
+        if (!authToken || !networkCode?.code) return;
 
         const {startTime, endTime} = getCurrentDateRange();
 
@@ -86,10 +100,10 @@ function Page() {
                     langType: 'VN',
                 }
             }).then((resp: any) => setReverseNum(resp.data.data.records[0].reserveNum));
-    }, [authToken])
+    }, [authToken, networkCode])
 
     useEffect(() => {
-        if (!authToken) return;
+        if (!authToken || !networkCode?.code || !reverseNum) return;
 
         const {startTime, endTime} = getCurrentDateRange();
 
@@ -110,7 +124,7 @@ function Page() {
                     langType: 'VN',
                 }
             }).then((resp: any) => setBills(resp.data.data.records.map((record: any) => record.billcode)));
-    }, [reverseNum]);
+    }, [reverseNum, authToken, networkCode]);
 
     return (
         <div>
