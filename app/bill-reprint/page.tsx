@@ -81,7 +81,7 @@ function isOldBillType(trackingNumber: string): boolean {
     return /^8[567]/.test(trackingNumber);
 }
 
-// ─── Bill Label OLD (85/86/87 prefix) ────────────────────────────────────────
+// ─── Bill Label OLD (85/86/87 prefix) — Mẫu Tiktok ───────────────────────────
 function BillLabel({
                        data,
                        billRef,
@@ -112,16 +112,20 @@ function BillLabel({
         <div
             ref={billRef}
             className="bill-label w-[378px] bg-white text-black flex flex-col px-3 pb-1"
-            style={{fontFamily: "Times New Roman"}}
+            style={{fontFamily: "Arial"}}
         >
             {/* HEADER */}
-            <div className="flex items-center justify-between text-[11px]">
-                <div className="flex justify-between items-center w-[65%]">
-                    <Image src="/tiktokshop-1.png" alt="TikTok Shop" width={110} height={20} priority/>
-                    <Image src="/logo-jt-express.webp" alt="J&T Express" width={80} height={20} priority/>
+            <div className="flex items-stretch justify-between text-[11px] bg-black">
+                <div className="flex justify-between items-center self-center w-[65%] bg-white">
+                    <Image src="/tiktokshop-1.png" alt="TikTok Shop" width={100} height={20} priority/>
+                    <Image src="/logo-jt-express-1.jpg" alt="J&T Express" width={90} height={20} priority className="pb-0.5"/>
                 </div>
-                <div className="flex-1 flex justify-end pr-4 font-bold text-[14px]">
-                    <span>ET</span>
+                {/* Ô ET tô đen, chữ trắng, đầy hết chiều cao header, sát khung */}
+                <div
+                    className="w-[64px] bg-black text-white font-bold text-[12px] flex mt-1 justify-start"
+                    style={{WebkitPrintColorAdjust: "exact", printColorAdjust: "exact"}}
+                >
+                    ET
                 </div>
             </div>
 
@@ -129,43 +133,37 @@ function BillLabel({
             <div className="relative border border-black flex flex-col">
 
                 {/* BARCODE */}
-                <div className="border-b border-black pt-3 flex flex-col items-center">
-                    <div className="w-[320px] overflow-hidden">
+                <div className="border-b border-black pt-1 flex flex-col items-center">
+                    <div className="w-[280px] h-[50px] overflow-hidden">
                         <svg ref={barcodeRef} className="w-full" preserveAspectRatio="none"/>
                     </div>
-                    <div className="text-[16px] font-bold tracking-widest">{trackingNumber}</div>
+                    <div className="text-[24px] font-bold tracking-widest leading-none mt-1">{trackingNumber}</div>
+                </div>
+
+                {/* SENDER — đứng riêng 1 hàng, chia 2 ô (ô phải thẳng hàng với cột mã phân tuyến) */}
+                <div className="flex border-b border-black">
+                    <div className="flex-1 border-r border-black px-1 py-1 flex items-end justify-between">
+                        <div className="flex items-start text-gray-600 text-[8px] leading-none">
+                            <span>Người gửi:</span>
+                            <span className="font-bold text-[12px] text-black ml-1 leading-none">
+                                {detail?.sellerName || detail?.senderName || "—"}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="w-[35%] shrink-0"/>
                 </div>
 
                 {/* MAIN AREA */}
                 <div className="flex border-b border-black">
                     {/* LEFT */}
-                    <div className="w-[80%] flex flex-col border-r text-[11px]">
-
-                        {/* SENDER */}
-                        <div className="border-b border-black pb-1 px-2">
-                            <div className="flex justify-between mt-1">
-                                <div className="text-gray-600 text-[8px]">
-                                    Người gửi:
-                                    <span className="font-bold text-[12px] text-black ml-1">
-                                        {detail?.sellerName || detail?.senderName || "—"}
-                                    </span>
-                                </div>
-                                <div className="font-bold">
-                                    {detail?.senderMobilePhone || ""}
-                                </div>
-                            </div>
-                            <div className="font-bold text-[8px]">
-                                {[detail?.senderDetailedAddress, detail?.senderAreaName, detail?.senderCityName, detail?.senderProvinceName]
-                                    .filter(Boolean).join(", ")}
-                            </div>
-                        </div>
+                    <div className="flex-1 flex flex-col border-r border-black text-[11px]">
 
                         {/* RECEIVER */}
-                        <div className="border-b border-black pb-1 px-2">
-                            <div className="mt-1">
-                                <div className="text-gray-600 text-[8px]">
-                                    Người nhận:
-                                    <span className="font-bold text-[12px] text-black ml-1">
+                        <div className="border-b border-black pb-1 px-1">
+                            <div>
+                                <div className="flex items-start text-gray-600 text-[8px] leading-none">
+                                    <span className="mt-1">Người nhận:</span>
+                                    <span className="font-bold text-[16px] mt-0.5 text-black ml-1 leading-none">
                                         {detail?.receiverName || "—"}
                                     </span>
                                 </div>
@@ -176,25 +174,29 @@ function BillLabel({
                         </div>
 
                         {/* RECEIVER ADDRESS */}
-                        <div className="px-2 pb-2">
-                            <div className="font-bold text-[8px]">
-                                <p className="text-[15px] line-clamp-3">{detail?.receiverDetailedAddress || ""}</p>
+                        <div className="flex-1 flex flex-col justify-between px-2 pb-2">
+                            <p className="text-[15px] font-bold line-clamp-3 leading-tight">
+                                {detail?.receiverDetailedAddress || ""}
+                            </p>
+                            <div className="font-bold text-[12px]">
                                 <p>{receiverAddressLine2}</p>
+                            </div>
+                            <div className="font-bold text-[12px]">
                                 <p>{detail?.receiverProvinceName || ""}</p>
                             </div>
                         </div>
                     </div>
 
                     {/* RIGHT — dispatch code */}
-                    <div className="w-[32%] flex flex-col text-center">
-                        <div className="border-b border-black py-[2px] text-[18px] font-bold">
+                    <div className="w-[28.57%] shrink-0 flex flex-col text-center">
+                        <div className="border-b border-black text-[20px] font-bold leading-6">
                             {detail?.terminalDispatchCode?.slice(0, 3) || "—"}
                         </div>
-                        <div className="border-b border-black py-[2px] text-[18px] font-bold">
+                        <div className="border-b border-black text-[20px] font-bold leading-6">
                             {detail?.terminalDispatchCode ? detail.terminalDispatchCode.split('-')[1] : "—"}
                         </div>
-                        <div className="border-b border-black py-[2px] pr-2 text-[18px] font-bold flex justify-end">
-                            <span>
+                        <div className="border-b border-black text-[20px] font-bold flex justify-center leading-6">
+                            <span className="text-center">
                                 {detail?.terminalDispatchCode && (detail.terminalDispatchCode.match(/-/g) || []).length === 2
                                     ? detail.terminalDispatchCode.slice(-3)
                                     : "\u00A0"}
@@ -586,7 +588,6 @@ export default function BillReprint() {
         const updatedBills: BillData[] = trackingList.map((t, i) => {
             const result = results[i];
             if (result.status === "fulfilled") {
-                console.log("a")
                 // @ts-ignore
                 const detail: any = result.value?.data?.data?.details;
                 if (detail) return {trackingNumber: t, status: "success" as const, detail};

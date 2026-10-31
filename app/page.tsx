@@ -9,7 +9,21 @@ import {
 } from "lucide-react";
 import {NETWORK_CODES, NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
 
-type NetworkCode = typeof NETWORK_CODES[number];
+// ─── Mã BC ────────────────────────────────────────────────────────────────────
+const DEFAULT_NETWORK_CODE = "028M08";
+const NETWORK_CODE_REGEX = /^[A-Z0-9]{6}$/;
+
+const sanitizeNetworkCode = (v: string) =>
+    v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+
+const buildNetwork = (code: string): any => {
+    const found = NETWORK_CODES.find(n => n.code === code);
+    if (found) return found;
+    const agentCode = code.startsWith("028")
+        ? NETWORK_CODES[0].agentCode
+        : NETWORK_CODES[1].agentCode;
+    return {code, label: code, agentCode};
+};
 
 // ─── Google Font (Nunito — hỗ trợ tiếng Việt) ────────────────────────────────
 const FontLoader = () => (
@@ -163,12 +177,16 @@ export default function Home() {
     const [initialCheckDone, setInitialCheckDone] = useState(false);
     const [showToken, setShowToken] = useState(false);
     const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
-    const [networkCode, setNetworkCode] = useState<NetworkCode>(NETWORK_CODES[0]);
+
+    // Mã BC: ô nhập (string) + object đã xác thực (dùng cho pill và localStorage)
+    const [networkInput, setNetworkInput] = useState(DEFAULT_NETWORK_CODE);
+    const [networkCode, setNetworkCode] = useState<any>(buildNetwork(DEFAULT_NETWORK_CODE));
 
     const isValid = tokenStatus === "valid";
     const isReady = isValid;
+    const networkInvalid = networkInput.length > 0 && !NETWORK_CODE_REGEX.test(networkInput);
 
-    const validateToken = async (token: string, network: NetworkCode, isInit = false) => {
+    const validateToken = async (token: string, network: any, isInit = false) => {
         setTokenStatus("checking");
         setStatusMsg(isInit ? "Đang xác thực token đã lưu..." : "Đang kiểm tra...");
         try {
@@ -178,10 +196,11 @@ export default function Home() {
             );
             if (res.ok) {
                 localStorage.setItem("YL_TOKEN", token);
-                localStorage.setItem(NETWORK_CODE_STORAGE_KEY, network.code);
+                localStorage.setItem(NETWORK_CODE_STORAGE_KEY, JSON.stringify(network));
                 setStoredToken(token);
                 setAuthToken(token);
                 setNetworkCode(network);
+                setNetworkInput(network.code);
                 setTokenStatus("valid");
                 setStatusMsg("Token hợp lệ — sẵn sàng sử dụng");
             } else {
@@ -211,12 +230,26 @@ export default function Home() {
 
     useEffect(() => {
         const saved = localStorage.getItem("YL_TOKEN") || localStorage.getItem("authToken");
-        const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
-        const validSavedNetwork = NETWORK_CODES.find(n => n.code === savedNetworkCode) || NETWORK_CODES[0];
-        setNetworkCode(validSavedNetwork);
+
+        // Đọc Mã BC đã lưu (JSON object hoặc chuỗi thuần), sai định dạng thì dùng mặc định
+        let savedCode = DEFAULT_NETWORK_CODE;
+        const raw = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                const c = sanitizeNetworkCode(String(parsed?.code ?? parsed ?? ""));
+                if (NETWORK_CODE_REGEX.test(c)) savedCode = c;
+            } catch {
+                const c = sanitizeNetworkCode(raw);
+                if (NETWORK_CODE_REGEX.test(c)) savedCode = c;
+            }
+        }
+        const savedNetwork = buildNetwork(savedCode);
+        setNetworkInput(savedCode);
+        setNetworkCode(savedNetwork);
 
         if (saved?.trim()) {
-            validateToken(saved.trim(), validSavedNetwork, true);
+            validateToken(saved.trim(), savedNetwork, true);
         } else {
             setInitialCheckDone(true);
             setStatusMsg("");
@@ -232,9 +265,8 @@ export default function Home() {
         }
     };
 
-    const handleNetworkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const selected = NETWORK_CODES.find(n => n.code === e.target.value) || NETWORK_CODES[0];
-        setNetworkCode(selected);
+    const handleNetworkChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setNetworkInput(sanitizeNetworkCode(e.target.value));
         if (tokenStatus === "valid") {
             setTokenStatus("idle");
             setStatusMsg("");
@@ -246,17 +278,19 @@ export default function Home() {
             setStatusMsg("Vui lòng nhập token trước");
             return;
         }
-        if (!networkCode) {
-            setStatusMsg("Vui lòng chọn Mã BC trước");
+        if (!NETWORK_CODE_REGEX.test(networkInput)) {
+            setTokenStatus("idle");
+            setStatusMsg("Mã BC phải đủ 6 ký tự (chữ và số)");
             return;
         }
-        validateToken(authToken.trim(), networkCode, false);
+        validateToken(authToken.trim(), buildNetwork(networkInput), false);
     };
 
     const clearToken = () => {
         setAuthToken("");
         setStoredToken("");
-        setNetworkCode(NETWORK_CODES[0]);
+        setNetworkInput(DEFAULT_NETWORK_CODE);
+        setNetworkCode(buildNetwork(DEFAULT_NETWORK_CODE));
         setTokenStatus("idle");
         setStatusMsg("");
         clearStored();
@@ -374,17 +408,26 @@ export default function Home() {
                                     </button>
                                 </div>
 
-                                {/* Mã BC select — nhỏ gọn, nằm kế khung token */}
-                                <select
-                                    value={networkCode.code}
+                                {/* Mã BC — nhập tay, 6 ký tự */}
+                                <input
+                                    type="text"
+                                    value={networkInput}
                                     onChange={handleNetworkChange}
+                                    onKeyDown={e => {
+                                        if (e.key === "Enter" && tokenStatus !== "valid") handleValidate();
+                                    }}
                                     disabled={tokenStatus === "checking"}
-                                    className="w-28 shrink-0 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-400/40 focus:border-orange-400 transition-all disabled:opacity-60"
-                                >
-                                    {NETWORK_CODES.map(n => (
-                                        <option key={n.code} value={n.code}>{n.label}</option>
-                                    ))}
-                                </select>
+                                    maxLength={6}
+                                    placeholder={DEFAULT_NETWORK_CODE}
+                                    title="Mã BC (6 ký tự)"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className={`w-28 shrink-0 border rounded-xl px-3 py-2.5 text-sm font-semibold text-center tracking-wider text-slate-700 placeholder-slate-300 bg-slate-50 focus:outline-none focus:ring-2 transition-all disabled:opacity-60 ${
+                                        networkInvalid
+                                            ? "border-red-300 focus:ring-red-400/40 focus:border-red-400"
+                                            : "border-slate-200 focus:ring-orange-400/40 focus:border-orange-400"
+                                    }`}
+                                />
 
                                 {tokenStatus !== "valid" && (
                                     <button
@@ -408,6 +451,13 @@ export default function Home() {
                                     Bookmarklet
                                 </button>
                             </div>
+
+                            {/* Network code hint */}
+                            {networkInvalid && (
+                                <p className="text-xs text-red-500 font-medium px-1 -mt-2">
+                                    Mã BC phải đủ 6 ký tự (hiện có {networkInput.length}/6)
+                                </p>
+                            )}
 
                             {/* Status message */}
                             {statusMsg && (
@@ -516,7 +566,7 @@ export default function Home() {
                             <div className="h-px flex-1 bg-slate-200"/>
                             <div className="flex items-center gap-1.5 text-xs text-slate-400">
                                 <AlertCircle className="w-3.5 h-3.5"/>
-                                Xác thực token và chọn Mã BC để mở khóa các chức năng
+                                Xác thực token và nhập Mã BC để mở khóa các chức năng
                             </div>
                             <div className="h-px flex-1 bg-slate-200"/>
                         </div>

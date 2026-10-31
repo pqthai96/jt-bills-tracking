@@ -4,7 +4,7 @@ import React, {useEffect, useState} from 'react';
 import BillsTrackingSection from "@/components/bills-tracking/bills-tracking-section";
 import axios from "axios";
 import {useRouter} from 'next/navigation';
-import {NETWORK_CODE_STORAGE_KEY} from "@/lib/networkCode";
+import {NETWORK_CODE_STORAGE_KEY, NETWORK_CODES} from "@/lib/networkCode";
 
 function Page() {
 
@@ -34,6 +34,7 @@ function Page() {
     useEffect(() => {
         const ylToken = localStorage.getItem('YL_TOKEN');
         const savedNetworkCode = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        console.log(savedNetworkCode);
 
         if (!ylToken || ylToken === "" || ylToken === null) {
             router.push('/');
@@ -60,6 +61,8 @@ function Page() {
 
     useEffect(() => {
         if (!authToken || !networkCode?.code) return;
+
+        console.log(networkCode);
 
         const {startTime, endTime} = getCurrentDateRange();
 

@@ -159,6 +159,37 @@ function formatETA(seconds: number): string {
     return s > 0 ? `${m}p ${s}s` : `${m}p`;
 }
 
+// ─── Chuẩn hóa Mã BC: object / JSON string / string → string (vd: "028M08") ──
+function extractNetworkCode(raw: unknown): string {
+    if (!raw) return DEFAULT_NETWORK_CODE;
+
+    // Dạng object: {code, label, agentCode}
+    if (typeof raw === 'object') {
+        const obj = raw as { code?: string; label?: string };
+        return String(obj.code || obj.label || DEFAULT_NETWORK_CODE).trim();
+    }
+
+    if (typeof raw === 'string') {
+        const text = raw.trim();
+        if (!text) return DEFAULT_NETWORK_CODE;
+
+        // Dạng JSON string: '{"code":"028M08",...}'
+        if (text.startsWith('{')) {
+            try {
+                const obj = JSON.parse(text);
+                return String(obj?.code || obj?.label || DEFAULT_NETWORK_CODE).trim();
+            } catch {
+                return DEFAULT_NETWORK_CODE;
+            }
+        }
+
+        // Dạng string thường (có thể bọc trong dấu nháy kép)
+        return text.replace(/^"+|"+$/g, '') || DEFAULT_NETWORK_CODE;
+    }
+
+    return DEFAULT_NETWORK_CODE;
+}
+
 // ─── Phân loại đơn hàng ───────────────────────────────────────────────────────
 function isTraditionalOrder(waybill: string): boolean {
     const prefix = waybill.substring(0, 2);
@@ -335,7 +366,8 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
 
     // ── Mã BC hiện tại (đọc từ localStorage, đồng bộ với trang Home) ──────────
-    const [networkCode, setNetworkCode] = useState<any>(DEFAULT_NETWORK_CODE);
+    // Luôn là string (vd: "028M08"), được bóc từ object {code, label, agentCode}
+    const [networkCode, setNetworkCode] = useState<string>(DEFAULT_NETWORK_CODE);
 
     const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
@@ -374,12 +406,12 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
     // ── Đọc Mã BC đã lưu ────────────────────────────────────────────────────
     useEffect(() => {
         const saved = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
-        if (saved) setNetworkCode(saved);
+        if (saved) setNetworkCode(extractNetworkCode(saved));
 
         // Đồng bộ nếu Mã BC bị đổi ở tab/trang khác trong khi trang này vẫn mở
         const handleStorage = (e: StorageEvent) => {
             if (e.key === NETWORK_CODE_STORAGE_KEY && e.newValue) {
-                setNetworkCode(e.newValue);
+                setNetworkCode(extractNetworkCode(e.newValue));
             }
         };
         window.addEventListener('storage', handleStorage);
@@ -698,7 +730,7 @@ export default function BillsTrackingSection({bills, authToken, isBillTracking}:
             // ── Lọc theo Mã BC (segment 2 của terminalDispatchCode) ──
             const segments = (order.terminalDispatchCode || '').split('-');
             const orderNetworkCode = (segments[1] || '').replace(/^[A-Za-z]+/, ''); // bỏ tiền tố chữ (vd: "S028W04" -> "028W04")
-            const isNetworkCode = orderNetworkCode === networkCode;
+            const isNetworkCode = orderNetworkCode.toUpperCase() === networkCode.toUpperCase();
 
             if (isNetworkCode && !showNetworkCode) return false;
             if (!isNetworkCode && !showNonNetworkCode) return false;
