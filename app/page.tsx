@@ -194,6 +194,7 @@ export default function Home() {
                 "https://jmsgw.jtexpress.vn/servicequality/integration/getWaybillsByReverse?type=1&waybillId=859391669969",
                 {method: "GET", headers: {"Content-Type": "application/json", authToken: token}}
             );
+            console.log(network);
             if (res.ok) {
                 localStorage.setItem("YL_TOKEN", token);
                 localStorage.setItem(NETWORK_CODE_STORAGE_KEY, JSON.stringify(network));
