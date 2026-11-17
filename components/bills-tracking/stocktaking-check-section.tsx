@@ -8,12 +8,13 @@ import {
     Search, Package, Filter, RotateCcw, ArrowLeft,
     Warehouse, CheckCircle2, XCircle, Clock,
     RefreshCw, Copy, Check,
-    CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, User, X,
+    CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, X,
 } from "lucide-react";
 import OrderDetail from "@/components/bills-tracking/order-detail";
 import PodHistory from "@/components/bills-tracking/pod-history";
 import IssueHistory from "@/components/bills-tracking/issue-history";
 import { DetailCache } from "@/components/bills-tracking/bills-tracking-section";
+import { NETWORK_CODE_STORAGE_KEY } from "@/lib/networkCode";
 
 // ─── Font loader ───────────────────────────────────────────────────────────────
 const FontLoader = () => (
@@ -80,6 +81,8 @@ interface BillInfo {
     lastIssueScanner: string;
     hasReturnTransfer: boolean;   // Đang chuyển hoàn (đã duyệt)
     hasReturnRegistered: boolean; // Đăng ký chuyển hoàn (chưa duyệt)
+    hasDispatchedToday: boolean;  // Quét phát hàng trong ngày hôm nay
+    hasGiaoLaiHang: boolean;      // Có Giao lại hàng sau ĐKCH
 }
 
 interface LoadProgress {
@@ -95,6 +98,7 @@ const EXCLUDED_SCAN_TYPE   = 'Lịch sử cuộc gọi-phát';
 const BATCH_SIZE     = 5;
 const MAX_RETRY      = 3;
 const RETRY_DELAY_MS = 800;
+const DEFAULT_NETWORK_CODE = "028M08";
 
 const GROUP_COLORS = [
     'bg-blue-50 border-blue-200',
@@ -150,6 +154,99 @@ function formatETA(seconds: number): string {
     return s > 0 ? `${m}p ${s}s` : `${m}p`;
 }
 
+// ─── Chuẩn hóa Mã BC: object / JSON string / string → string (vd: "028M08") ──
+function extractNetworkCode(raw: unknown): string {
+    if (!raw) return DEFAULT_NETWORK_CODE;
+
+    if (typeof raw === 'object') {
+        const obj = raw as { code?: string; label?: string };
+        return String(obj.code || obj.label || DEFAULT_NETWORK_CODE).trim();
+    }
+
+    if (typeof raw === 'string') {
+        const text = raw.trim();
+        if (!text) return DEFAULT_NETWORK_CODE;
+
+        if (text.startsWith('{')) {
+            try {
+                const obj = JSON.parse(text);
+                return String(obj?.code || obj?.label || DEFAULT_NETWORK_CODE).trim();
+            } catch {
+                return DEFAULT_NETWORK_CODE;
+            }
+        }
+
+        return text.replace(/^"+|"+$/g, '') || DEFAULT_NETWORK_CODE;
+    }
+
+    return DEFAULT_NETWORK_CODE;
+}
+
+// ─── Phân loại đơn hàng ───────────────────────────────────────────────────────
+function isTraditionalOrder(waybill: string): boolean {
+    const prefix = waybill.substring(0, 2);
+    return prefix === "80" || prefix === "84";
+}
+
+// ─── Kiểm tra ngày hôm nay ────────────────────────────────────────────────────
+function isScanToday(scanTime: string | number | null | undefined): boolean {
+    if (!scanTime) return false;
+    let dateObj: Date;
+    if (typeof scanTime === 'number') {
+        dateObj = new Date(scanTime);
+    } else {
+        const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(scanTime);
+        if (ddmmyyyy) {
+            dateObj = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
+        } else {
+            dateObj = new Date(scanTime);
+        }
+    }
+    if (isNaN(dateObj.getTime())) return false;
+    const today = new Date();
+    return (
+        dateObj.getFullYear() === today.getFullYear() &&
+        dateObj.getMonth() === today.getMonth() &&
+        dateObj.getDate() === today.getDate()
+    );
+}
+
+// ─── Parse uploadTime thành timestamp ms ─────────────────────────────────────
+function parseUploadTime(uploadTime: string | number | null | undefined): number {
+    if (!uploadTime) return 0;
+    if (typeof uploadTime === 'number') return uploadTime;
+    const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/.exec(uploadTime);
+    if (ddmmyyyy) {
+        return new Date(
+            `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}T${ddmmyyyy[4]}:${ddmmyyyy[5]}:${ddmmyyyy[6]}`
+        ).getTime();
+    }
+    return new Date(uploadTime).getTime() || 0;
+}
+
+// ─── Kiểm tra GLH sau ĐKCH ───────────────────────────────────────────────────
+function detectGiaoLaiHangAfterDKCH(details: any[]): boolean {
+    if (!details || details.length === 0) return false;
+
+    const dkchEntries = details.filter(
+        (d: any) =>
+            (d.scanTypeName || '').includes('Đăng ký chuyển hoàn') ||
+            (d.scanTypeName || '').includes('Đăng ký CH lần 2')
+    );
+    if (dkchEntries.length === 0) return false;
+
+    const latestDKCHTime = Math.max(
+        ...dkchEntries.map((d: any) => parseUploadTime(d.uploadTime))
+    );
+    if (!latestDKCHTime) return false;
+
+    return details.some(
+        (d: any) =>
+            (d.scanTypeName || '').includes('Giao lại hàng') &&
+            parseUploadTime(d.uploadTime) > latestDKCHTime
+    );
+}
+
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 function LoadProgressBar({ progress }: { progress: LoadProgress }) {
     const pct     = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -192,6 +289,33 @@ function LoadProgressBar({ progress }: { progress: LoadProgress }) {
     );
 }
 
+// ─── Tri-state filter (Tất cả / true / false) ─────────────────────────────────
+type TriOption = { value: boolean | null; label: string; active: string };
+
+function TriFilter({ value, onChange, options }: {
+    value: boolean | null;
+    onChange: (v: boolean | null) => void;
+    options: TriOption[];
+}) {
+    return (
+        <div className="flex items-center gap-1 border border-indigo-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+            {options.map(opt => (
+                <button
+                    key={String(opt.value)}
+                    onClick={() => onChange(opt.value)}
+                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                        value === opt.value
+                            ? opt.active
+                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                    }`}
+                >
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 // ─── Context & memoized list item ─────────────────────────────────────────────
 const SelectedWaybillCtx = React.createContext<string | null>(null);
 
@@ -220,7 +344,7 @@ const StocktakingItem = memo(function StocktakingItem({
                 {info.waybill}
             </div>
             {info.terminalDispatchCode && (
-                <div className={`text-center text-xs font-mono mt-1 truncate ${isSelected ? 'text-indigo-400' : 'text-blue-500'}`}>
+                <div className={`text-center text-xs font-mono mt-1 truncate select-none ${isSelected ? 'text-indigo-400' : 'text-blue-500'}`}>
                     {info.terminalDispatchCode}
                 </div>
             )}
@@ -263,6 +387,12 @@ function pickValidTrackingEntry(details: any[]): { scanTypeName: string; scanNet
     };
 }
 
+// Mã BC của đơn = segment 2 của terminalDispatchCode, bỏ tiền tố chữ (vd: "S028W04" -> "028W04")
+function getOrderNetworkCode(terminalDispatchCode: string): string {
+    const segments = (terminalDispatchCode || '').split('-');
+    return (segments[1] || '').replace(/^[A-Za-z]+/, '');
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function StocktakingCheckSection({ bills, authToken, selectedDate, onDateChange }: StocktakingCheckSectionProps) {
     const [billsInfo, setBillsInfo]             = useState<BillInfo[]>([]);
@@ -272,17 +402,26 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     const [copied, setCopied]                   = useState(false);
     const [sortMode, setSortMode]               = useState<SortMode>("default");
 
+    // ── Mã BC hiện tại (đọc từ localStorage, đồng bộ với trang Home) ──────────
+    const [networkCode, setNetworkCode] = useState<string>(DEFAULT_NETWORK_CODE);
+
     // ── Filters ────────────────────────────────────────────────────────────────
     const [filterStocktaking, setFilterStocktaking]       = useState<"all" | "checked" | "not_checked">("all");
     const [selectedLastStatuses, setSelectedLastStatuses] = useState<string[]>([]);
     const [searchQuery, setSearchQuery]                   = useState("");
-    const [availableScanners, setAvailableScanners]       = useState<string[]>([]);
     const [selectedScanners, setSelectedScanners]         = useState<string[]>([]);
+    const [selectedDispatchCode, setSelectedDispatchCode] = useState<string>("");
 
-    // null = tất cả, true = đã chuyển hoàn, false = chưa
+    const [showNetworkCode, setShowNetworkCode]           = useState(true);
+    const [showNonNetworkCode, setShowNonNetworkCode]     = useState(true);
+    const [showTraditional, setShowTraditional]           = useState(true);
+    const [showEcommerce, setShowEcommerce]               = useState(true);
+
+    // null = tất cả, true = có, false = không
     const [returnTransferFilter, setReturnTransferFilter]     = useState<boolean | null>(null);
-    // null = tất cả, true = đã đăng ký hoàn, false = chưa
     const [returnRegisteredFilter, setReturnRegisteredFilter] = useState<boolean | null>(null);
+    const [dispatchedTodayFilter, setDispatchedTodayFilter]   = useState<boolean | null>(null);
+    const [giaoLaiHangFilter, setGiaoLaiHangFilter]           = useState<boolean | null>(null);
 
     // ── Cache & transition ─────────────────────────────────────────────────────
     const detailCacheRef                        = useRef<Map<string, DetailCache>>(new Map());
@@ -290,6 +429,20 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     const [isTransitioning, setIsTransitioning] = useState(false);
 
     const today = toDateStr(new Date());
+
+    // ── Đọc Mã BC đã lưu + đồng bộ giữa các tab ───────────────────────────────
+    useEffect(() => {
+        const saved = localStorage.getItem(NETWORK_CODE_STORAGE_KEY);
+        if (saved) setNetworkCode(extractNetworkCode(saved));
+
+        const handleStorage = (e: StorageEvent) => {
+            if (e.key === NETWORK_CODE_STORAGE_KEY && e.newValue) {
+                setNetworkCode(extractNetworkCode(e.newValue));
+            }
+        };
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+    }, []);
 
     // ── Date navigation ────────────────────────────────────────────────────────
     const shiftDay = (delta: number) => {
@@ -299,6 +452,11 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
     };
 
     // ── Computed ───────────────────────────────────────────────────────────────
+    const hasFilterData = useMemo(
+        () => billsInfo.some(b => b.stocktakingStatus !== "loading"),
+        [billsInfo]
+    );
+
     const allLastStatuses = useMemo(
         () => Array.from(new Set(
             billsInfo
@@ -306,6 +464,16 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 .map(b => b.latestScanTypeName)
                 .filter(Boolean)
         )),
+        [billsInfo]
+    );
+
+    const availableScanners = useMemo(
+        () => Array.from(new Set(billsInfo.map(b => b.lastIssueScanner).filter(Boolean))).sort(),
+        [billsInfo]
+    );
+
+    const availableDispatchCodes = useMemo(
+        () => Array.from(new Set(billsInfo.map(b => b.terminalDispatchCode).filter(Boolean))).sort(),
         [billsInfo]
     );
 
@@ -319,11 +487,30 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             selectedLastStatuses.length < allLastStatuses.length &&
             !selectedLastStatuses.includes(b.latestScanTypeName)
         ) return false;
+
+        // Lọc theo Mã BC
+        const isNetworkCode = getOrderNetworkCode(b.terminalDispatchCode).toUpperCase() === networkCode.toUpperCase();
+        if (isNetworkCode && !showNetworkCode) return false;
+        if (!isNetworkCode && !showNonNetworkCode) return false;
+
+        // Lọc theo loại đơn
+        const isTraditional = isTraditionalOrder(b.waybill);
+        if (isTraditional && !showTraditional) return false;
+        if (!isTraditional && !showEcommerce) return false;
+
         if (selectedScanners.length > 0 && !selectedScanners.includes(b.lastIssueScanner)) return false;
+        if (selectedDispatchCode && b.terminalDispatchCode !== selectedDispatchCode) return false;
         if (returnTransferFilter !== null && b.hasReturnTransfer !== returnTransferFilter) return false;
         if (returnRegisteredFilter !== null && b.hasReturnRegistered !== returnRegisteredFilter) return false;
+        if (dispatchedTodayFilter !== null && b.hasDispatchedToday !== dispatchedTodayFilter) return false;
+        if (giaoLaiHangFilter !== null && b.hasGiaoLaiHang !== giaoLaiHangFilter) return false;
         return true;
-    }), [billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses, selectedScanners, returnTransferFilter, returnRegisteredFilter]);
+    }), [
+        billsInfo, filterStocktaking, selectedLastStatuses, searchQuery, allLastStatuses,
+        networkCode, showNetworkCode, showNonNetworkCode, showTraditional, showEcommerce,
+        selectedScanners, selectedDispatchCode,
+        returnTransferFilter, returnRegisteredFilter, dispatchedTodayFilter, giaoLaiHangFilter,
+    ]);
 
     const filtered = useMemo(() => {
         if (sortMode === "default") return baseFiltered;
@@ -373,6 +560,12 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             setSelectedLastStatuses([...allLastStatuses]);
     }, [allLastStatuses]);
 
+    // Bỏ chọn nếu vận đơn đang chọn không còn trong danh sách sau khi lọc
+    useEffect(() => {
+        if (!selectedWaybill || !hasFilterData) return;
+        if (!filtered.some(b => b.waybill === selectedWaybill)) setSelectedWaybill(null);
+    }, [filtered, selectedWaybill, hasFilterData]);
+
     // ── Load data — batch + retry + progress ───────────────────────────────────
     const loadData = async () => {
         setIsLoading(true);
@@ -390,6 +583,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             lastIssueScanner: "",
             hasReturnTransfer: false,
             hasReturnRegistered: false,
+            hasDispatchedToday: false,
+            hasGiaoLaiHang: false,
         })));
 
         const dateStart = `${selectedDate} 00:00:00`;
@@ -437,12 +632,22 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                     // Đăng ký chuyển hoàn = mới đăng ký, chưa duyệt
                     const hasReturnRegistered = allScanTypes.some(s => s.includes('Đăng ký chuyển hoàn'));
 
+                    // Đã quét phát hàng trong ngày hôm nay (xuất kho)
+                    const hasDispatchedToday = details.some(
+                        (d: any) =>
+                            (d.scanTypeName || '').includes('Quét phát hàng') &&
+                            isScanToday(d.scanTime)
+                    );
+
+                    // Có Giao lại hàng sau lần ĐKCH gần nhất
+                    const hasGiaoLaiHang = detectGiaoLaiHangAfterDKCH(details);
+
                     // Người quét kiện vấn đề gần nhất
                     const issueRecords: any[] = issueResp.data?.data?.records ?? [];
                     const lastIssue           = issueRecords[0];
                     const lastIssueScanner    = lastIssue?.operatorName || lastIssue?.scanUserName || '';
 
-                    // Pre-cache để click không cần fetch lại (sẽ bị xóa khi click → fetch fresh)
+                    // Pre-cache (sẽ bị xóa khi click → fetch fresh)
                     detailCacheRef.current.set(waybill, {
                         orderDetail: orderResp.data?.data?.details ?? null,
                         podHistory: [...details].reverse(),
@@ -461,6 +666,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         lastIssueScanner,
                         hasReturnTransfer,
                         hasReturnRegistered,
+                        hasDispatchedToday,
+                        hasGiaoLaiHang,
                     });
                 } catch {
                     rawResults.push({
@@ -473,6 +680,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         lastIssueScanner: "",
                         hasReturnTransfer: false,
                         hasReturnRegistered: false,
+                        hasDispatchedToday: false,
+                        hasGiaoLaiHang: false,
                     });
                     throw new Error("load failed");
                 }
@@ -490,27 +699,23 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
             return { ...r, groupLevel1: level1, groupLevel2: level2, groupColor: colorMap.get(`${level1}-${level2}`) || 'bg-slate-50 border-slate-200' };
         });
 
-        const scanners = Array.from(new Set(results.map(r => r.lastIssueScanner).filter(Boolean))).sort();
-        setAvailableScanners(scanners);
+        // Reset các filter khi load lại
         setSelectedScanners([]);
-
-        // Reset các filter hoàn khi load lại
+        setSelectedDispatchCode("");
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
+        setDispatchedTodayFilter(null);
+        setGiaoLaiHangFilter(null);
+        setShowTraditional(true);
+        setShowEcommerce(true);
 
         setBillsInfo(results);
         setTimeout(() => { setLoadProgress(null); setIsLoading(false); }, 1200);
     };
 
-    // ── Select waybill — xóa cache cũ, fetch fresh rồi mới render ────────────
-    const selectedWaybillRef = useRef(selectedWaybill);
-    useEffect(() => { selectedWaybillRef.current = selectedWaybill; }, [selectedWaybill]);
-
-    const handleSelectWaybill = useCallback(async (waybill: string) => {
-        if (waybill === selectedWaybillRef.current) return;
-        setIsTransitioning(true);
-        // Xóa cache cũ → luôn fetch dữ liệu mới nhất
-        detailCacheRef.current.delete(waybill);
+    // ── Prefetch đầy đủ (order + pod + issue) khi hover ───────────────────────
+    const prefetchDetail = useCallback(async (waybill: string) => {
+        if (detailCacheRef.current.has(waybill)) return;
         try {
             const [orderResp, podResp, issueResp]: [any, any, any] = await Promise.all([
                 axios.post(
@@ -535,26 +740,21 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 issueHistory: issueResp.data?.data?.records ?? [],
             });
         } catch { }
+    }, [authToken]);
+
+    // ── Select waybill — xóa cache cũ, fetch fresh rồi mới render ────────────
+    const selectedWaybillRef = useRef(selectedWaybill);
+    useEffect(() => { selectedWaybillRef.current = selectedWaybill; }, [selectedWaybill]);
+
+    const handleSelectWaybill = useCallback(async (waybill: string) => {
+        if (waybill === selectedWaybillRef.current) return;
+        setIsTransitioning(true);
+        detailCacheRef.current.delete(waybill);
+        await prefetchDetail(waybill);
         setSelectedWaybill(waybill);
         setContentKey(k => k + 1);
         setIsTransitioning(false);
-    }, [authToken]);
-
-    // ── Prefetch khi hover (không xóa cache, chỉ bổ sung nếu thiếu) ──────────
-    const prefetchIssue = useCallback(async (waybill: string) => {
-        const existing = detailCacheRef.current.get(waybill);
-        if (existing?.issueHistory && existing.issueHistory.length !== 0) return;
-        try {
-            const resp: any = await axios.post(
-                "https://jmsgw.jtexpress.vn/operatingplatform/abnormalPieceScanList/pageList",
-                { current: 1, size: 100, waybillId: waybill, countryId: "1" },
-                { headers: { authToken, lang: "VN", langType: "VN" } }
-            );
-            const records = resp.data?.data?.records ?? [];
-            const prev = detailCacheRef.current.get(waybill) ?? { orderDetail: null, podHistory: [], issueHistory: [] };
-            detailCacheRef.current.set(waybill, { ...prev, issueHistory: records });
-        } catch { }
-    }, [authToken]);
+    }, [prefetchDetail]);
 
     // ── Copy ───────────────────────────────────────────────────────────────────
     const handleCopyFiltered = () => {
@@ -576,10 +776,22 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
         setSelectedLastStatuses([...allLastStatuses]);
         setSearchQuery("");
         setSelectedScanners([]);
+        setSelectedDispatchCode("");
+        setShowNetworkCode(true);
+        setShowNonNetworkCode(true);
+        setShowTraditional(true);
+        setShowEcommerce(true);
         setReturnTransferFilter(null);
         setReturnRegisteredFilter(null);
+        setDispatchedTodayFilter(null);
+        setGiaoLaiHangFilter(null);
         setSortMode("default");
     };
+
+    const toggleBtn = (active: boolean, activeCls: string, hoverCls: string, bold = false) =>
+        `whitespace-nowrap px-2 py-0.5 rounded-lg text-[11px] ${bold ? 'font-bold' : 'font-semibold'} border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+            active ? activeCls : `bg-white border-slate-200 text-slate-400 ${hoverCls}`
+        }`;
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return (
@@ -661,8 +873,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                         <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
                             <XCircle className="w-3.5 h-3.5" />{notCheckedCount} chưa kiểm
                         </span>
-                        <span className="text-xs text-slate-400 font-semibold border border-slate-200 px-2.5 py-1 rounded-full bg-slate-50">
-                            {bills.length} đơn
+                        <span className="text-xs text-slate-500 font-semibold border border-slate-200 px-2.5 py-1 rounded-full bg-slate-50">
+                            {hasFilterData ? `${filtered.length} / ${bills.length}` : bills.length} đơn
                         </span>
                         {isLoading && !loadProgress && (
                             <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-500 rounded-full animate-spin" />
@@ -679,114 +891,183 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                 {loadProgress && <LoadProgressBar progress={loadProgress} />}
 
                 {/* ── Filter bar ── */}
-                <div className="bg-white border-b border-slate-200 px-5 py-2.5 flex-shrink-0 flex flex-wrap items-center gap-3">
-                    <Filter className="w-3.5 h-3.5 text-slate-400" />
+                {hasFilterData && (
+                    <div className="bg-indigo-50/60 border-b border-indigo-100 px-5 py-2 flex-shrink-0 flex flex-col gap-2">
 
-                    {/* Trạng thái cuối — chỉ khi không filter "đã kiểm" */}
-                    {filterStocktaking !== "checked" && allLastStatuses.length > 0 && (<>
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Trạng thái cuối</span>
-                        <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:border-indigo-300 cursor-pointer text-xs">
-                            <input type="checkbox"
-                                   checked={selectedLastStatuses.length === allLastStatuses.length}
-                                   onChange={e => setSelectedLastStatuses(e.target.checked ? [...allLastStatuses] : [])}
-                                   className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            />
-                            <span className="font-semibold text-slate-700">Tất cả</span>
-                        </label>
-                        {allLastStatuses.map(status => (
-                            <label key={status} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:border-indigo-300 cursor-pointer text-xs">
-                                <input type="checkbox"
-                                       checked={selectedLastStatuses.includes(status)}
-                                       onChange={e => setSelectedLastStatuses(prev =>
-                                           e.target.checked ? [...prev, status] : prev.filter(s => s !== status)
-                                       )}
-                                       className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                                <span className="text-slate-700">{status}</span>
-                            </label>
-                        ))}
-                    </>)}
-
-                    {/* Người quét kiện vấn đề */}
-                    {availableScanners.length > 0 && (<>
-                        <div className="h-5 w-px bg-slate-200" />
-                        <div className="flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Người quét vấn đề</span>
-                        </div>
-                        <select
-                            value={selectedScanners[0] ?? ""}
-                            onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
-                            className={`text-xs font-semibold border rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-400/40 transition-all cursor-pointer ${
-                                selectedScanners.length > 0
-                                    ? 'bg-amber-50 border-amber-300 text-amber-800'
-                                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-indigo-300'
-                            }`}
-                        >
-                            <option value="">Tất cả ({availableScanners.length} người)</option>
-                            {availableScanners.map(name => (
-                                <option key={name} value={name}>{name}</option>
-                            ))}
-                        </select>
-                        {selectedScanners.length > 0 && (
-                            <button onClick={() => setSelectedScanners([])}
-                                    className="text-amber-500 hover:text-amber-700 transition-colors" title="Bỏ lọc">
-                                <X className="w-3.5 h-3.5" />
-                            </button>
+                        {/* Hàng 1: Trạng thái cuối — chỉ khi không filter "đã kiểm" */}
+                        {filterStocktaking !== "checked" && allLastStatuses.length > 0 && (
+                            <div className="flex items-center gap-1 border border-indigo-100 rounded-xl px-2.5 py-1.5 bg-white/70 shadow-sm">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    <Filter className="w-3.5 h-3.5 text-slate-400 mr-0.5" />
+                                    <button
+                                        onClick={() => setSelectedLastStatuses(
+                                            selectedLastStatuses.length < allLastStatuses.length ? [...allLastStatuses] : []
+                                        )}
+                                        className={`px-3 py-1 rounded-full text-xs font-bold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                            selectedLastStatuses.length === allLastStatuses.length
+                                                ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                                                : 'bg-white text-slate-500 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
+                                        }`}
+                                    >
+                                        Tất cả
+                                    </button>
+                                    {allLastStatuses.map(status => (
+                                        <button
+                                            key={status}
+                                            onClick={() => setSelectedLastStatuses(prev =>
+                                                prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
+                                            )}
+                                            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all duration-200 hover:shadow-sm active:scale-95 ${
+                                                selectedLastStatuses.includes(status)
+                                                    ? 'bg-amber-100 text-amber-800 border-amber-200'
+                                                    : 'bg-white border-slate-200 text-slate-500 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
+                                            }`}
+                                        >
+                                            {status}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         )}
-                    </>)}
 
-                    <div className="h-5 w-px bg-slate-200" />
+                        {/* Hàng 2: Loại đơn + Mã BC + Mã đoạn + Người quét KVĐ */}
+                        <div className="flex flex-wrap items-stretch gap-2">
+                            <div className="flex items-center gap-2 border-2 border-slate-200 rounded-xl px-2 py-1 bg-slate-50 shadow-sm">
+                                <button
+                                    onClick={() => setShowTraditional(!showTraditional)}
+                                    className={toggleBtn(showTraditional, 'bg-teal-100 text-teal-800 border-teal-200', 'hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700', true)}
+                                >
+                                    TRUYỀN THỐNG
+                                </button>
+                                <button
+                                    onClick={() => setShowEcommerce(!showEcommerce)}
+                                    className={toggleBtn(showEcommerce, 'bg-blue-100 text-blue-800 border-blue-200', 'hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700', true)}
+                                >
+                                    ĐƠN SÀN
+                                </button>
+                                <div className="w-px h-4 bg-slate-300" />
+                                <button
+                                    onClick={() => setShowNetworkCode(!showNetworkCode)}
+                                    className={toggleBtn(showNetworkCode, 'bg-teal-100 text-teal-800 border-teal-200', 'hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700')}
+                                >
+                                    {networkCode}
+                                </button>
+                                <button
+                                    onClick={() => setShowNonNetworkCode(!showNonNetworkCode)}
+                                    className={toggleBtn(showNonNetworkCode, 'bg-teal-100 text-teal-800 border-teal-200', 'hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700')}
+                                >
+                                    Khác
+                                </button>
 
-                    {/* Chuyển hoàn (đã duyệt) */}
-                    <div className="flex items-center gap-1.5">
-                        {([
-                            { value: null,  label: 'Tất cả',           active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                            { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-50 border-rose-400 text-rose-700' },
-                            { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-50 border-emerald-400 text-emerald-700' },
-                        ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
+                                {/* Mã đoạn */}
+                                {availableDispatchCodes.length > 0 && (<>
+                                    <div className="w-px h-4 bg-slate-300" />
+                                    <div className="flex items-center gap-0.5">
+                                        <select
+                                            value={selectedDispatchCode}
+                                            onChange={e => setSelectedDispatchCode(e.target.value)}
+                                            className={`text-[11px] font-semibold border rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-200 transition-all cursor-pointer ${
+                                                selectedDispatchCode
+                                                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                                    : 'bg-white border-slate-200 text-slate-600'
+                                            }`}
+                                        >
+                                            <option value="">MÃ ĐOẠN ({availableDispatchCodes.length})</option>
+                                            {availableDispatchCodes.map(code => (
+                                                <option key={code} value={code}>{code}</option>
+                                            ))}
+                                        </select>
+                                        {selectedDispatchCode && (
+                                            <button onClick={() => setSelectedDispatchCode("")}
+                                                    className="text-amber-400 hover:text-amber-600 transition-colors">
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </>)}
+
+                                {/* Người quét KVĐ */}
+                                {availableScanners.length > 0 && (<>
+                                    <div className="w-px h-4 bg-slate-300" />
+                                    <div className="flex items-center gap-0.5">
+                                        <select
+                                            value={selectedScanners[0] ?? ""}
+                                            onChange={e => setSelectedScanners(e.target.value ? [e.target.value] : [])}
+                                            className={`text-[11px] font-semibold border rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-teal-200 transition-all cursor-pointer ${
+                                                selectedScanners.length > 0
+                                                    ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                                    : 'bg-white border-slate-200 text-slate-600'
+                                            }`}
+                                        >
+                                            <option value="">NGƯỜI QUÉT KVĐ ({availableScanners.length})</option>
+                                            {availableScanners.map(name => (
+                                                <option key={name} value={name}>{name}</option>
+                                            ))}
+                                        </select>
+                                        {selectedScanners.length > 0 && (
+                                            <button onClick={() => setSelectedScanners([])}
+                                                    className="text-teal-400 hover:text-teal-600 transition-colors">
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </>)}
+                            </div>
+
+                            {/* Chuyển hoàn */}
+                            <TriFilter
+                                value={returnTransferFilter}
+                                onChange={setReturnTransferFilter}
+                                options={[
+                                    { value: null,  label: 'Tất cả',           active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+                                    { value: true,  label: 'Đã chuyển hoàn',   active: 'bg-rose-100 text-rose-800 border-rose-200' },
+                                    { value: false, label: 'Chưa chuyển hoàn', active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                                ]}
+                            />
+
+                            {/* Đăng ký hoàn */}
+                            <TriFilter
+                                value={returnRegisteredFilter}
+                                onChange={setReturnRegisteredFilter}
+                                options={[
+                                    { value: null,  label: 'Tất cả',     active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+                                    { value: true,  label: 'Đã ĐKCH',    active: 'bg-amber-100 text-amber-800 border-amber-200' },
+                                    { value: false, label: 'Chưa ĐKCH',  active: 'bg-slate-200 text-slate-700 border-slate-300' },
+                                ]}
+                            />
+
+                            {/* Xuất kho */}
+                            <TriFilter
+                                value={dispatchedTodayFilter}
+                                onChange={setDispatchedTodayFilter}
+                                options={[
+                                    { value: null,  label: 'Tất cả',        active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+                                    { value: true,  label: 'Đã xuất kho',   active: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                                    { value: false, label: 'Chưa xuất kho', active: 'bg-amber-100 text-amber-800 border-amber-200' },
+                                ]}
+                            />
+
+                            {/* Giao lại hàng sau ĐKCH */}
+                            <TriFilter
+                                value={giaoLaiHangFilter}
+                                onChange={setGiaoLaiHangFilter}
+                                options={[
+                                    { value: null,  label: 'Tất cả',                active: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+                                    { value: true,  label: 'Đã có GLH sau ĐKCH',    active: 'bg-violet-100 text-violet-800 border-violet-200' },
+                                    { value: false, label: 'Chưa có GLH sau ĐKCH',  active: 'bg-orange-100 text-orange-800 border-orange-200' },
+                                ]}
+                            />
+
+                            {/* Reset */}
                             <button
-                                key={String(opt.value)}
-                                onClick={() => setReturnTransferFilter(opt.value)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                                    returnTransferFilter === opt.value
-                                        ? opt.active
-                                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
-                                }`}
+                                onClick={clearFilters}
+                                className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-200 bg-white hover:bg-rose-50 px-3 py-1.5 rounded-xl transition-all duration-200 hover:shadow-md active:scale-95 ml-auto self-stretch shadow-sm"
                             >
-                                {opt.label}
+                                <RotateCcw className="w-3 h-3" />Reset
                             </button>
-                        ))}
+                        </div>
                     </div>
-
-                    <div className="h-5 w-px bg-slate-200" />
-
-                    {/* Đăng ký hoàn (chưa duyệt) */}
-                    <div className="flex items-center gap-1.5">
-                        {([
-                            { value: null,  label: 'Tất cả',            active: 'bg-slate-100 border-slate-400 text-slate-700' },
-                            { value: true,  label: 'Đã ĐKCH',   active: 'bg-orange-50 border-orange-400 text-orange-700' },
-                            { value: false, label: 'Chưa ĐKCH', active: 'bg-sky-50 border-sky-400 text-sky-700' },
-                        ] as { value: boolean | null; label: string; active: string }[]).map(opt => (
-                            <button
-                                key={String(opt.value)}
-                                onClick={() => setReturnRegisteredFilter(opt.value)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                                    returnRegisteredFilter === opt.value
-                                        ? opt.active
-                                        : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
-                                }`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
-
-                    <button onClick={clearFilters}
-                            className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-all ml-auto">
-                        <RotateCcw className="w-3 h-3" />Reset
-                    </button>
-                </div>
+                )}
 
                 {/* ── Body ── */}
                 <div className="flex flex-1 overflow-hidden">
@@ -799,7 +1080,6 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 {isLoading && !loadProgress && (
                                     <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-indigo-500 rounded-full animate-spin" />
                                 )}
-                                <span className="text-slate-400 font-normal">({filtered.length})</span>
                             </span>
                             <div className="flex items-center gap-1.5">
                                 <button onClick={cycleSortMode} title="Sắp xếp theo mã đoạn"
@@ -811,13 +1091,16 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                     <ArrowUpDown className="w-3 h-3" />{sortLabel}
                                 </button>
                                 <button onClick={handleCopyFiltered} disabled={filtered.length === 0}
-                                        title="Copy mã vận đơn"
+                                        title="Copy tất cả mã vận đơn"
                                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
                                             copied
                                                 ? "bg-emerald-50 text-emerald-700 border-emerald-300"
                                                 : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
                                         }`}>
-                                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                    {copied
+                                        ? <><Check className="w-3 h-3" />Copied!</>
+                                        : <><Copy className="w-3 h-3" />({filtered.length})</>
+                                    }
                                 </button>
                             </div>
                         </div>
@@ -836,7 +1119,7 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                         key={info.waybill}
                                         info={info}
                                         onSelect={handleSelectWaybill}
-                                        onHover={prefetchIssue}
+                                        onHover={prefetchDetail}
                                     />
                                 ))}
                             </div>
@@ -850,8 +1133,12 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                                     <Warehouse className="w-8 h-8 text-slate-300" />
                                 </div>
-                                <p className="font-bold text-slate-500">Chọn một vận đơn để xem chi tiết</p>
-                                <p className="text-xs text-slate-400 mt-1">{filtered.length} vận đơn trong danh sách</p>
+                                <p className="font-bold text-slate-500">
+                                    {isLoading ? "Đang tải dữ liệu..." : "Chọn một vận đơn để xem chi tiết"}
+                                </p>
+                                {!isLoading && filtered.length > 0 && (
+                                    <p className="text-xs text-slate-400 mt-1">Có {filtered.length} vận đơn trong danh sách</p>
+                                )}
                             </div>
                         ) : (
                             <div key={contentKey}
@@ -863,7 +1150,8 @@ export default function StocktakingCheckSection({ bills, authToken, selectedDate
                                 <div className="flex-1 p-4 flex flex-col gap-3 overflow-hidden">
                                     <div className="flex-[2] min-h-0">
                                         <PodHistory waybill={selectedWaybill} authToken={authToken}
-                                                    cache={detailCacheRef.current.get(selectedWaybill)} />
+                                                    cache={detailCacheRef.current.get(selectedWaybill)}
+                                                    networkCode={networkCode} />
                                     </div>
                                     <div className="flex-1 min-h-0">
                                         <IssueHistory waybill={selectedWaybill} authToken={authToken}
